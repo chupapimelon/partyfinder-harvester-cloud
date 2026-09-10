@@ -1,16 +1,33 @@
 /**
  * PartyFinder Cloud Studio v2 - Cloud Frontend Controller
- * Architecture: Cloudflare Pages + Cloudflare R2 + Supabase Realtime
  * Strategy 1 Deep Realm Harvester & Role Metric Verification Hub
+ * Powered by Cloudflare Pages, Cloudflare R2, and Supabase Realtime
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Configuration & Supabase Endpoint
   const SUPABASE_URL = 'https://anvkqwbqgqcopsuhhene.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_FdCOqHNEXexN-CgD9Pb9Ag_SLV86t_I';
   const DEFAULT_R2_URL = 'https://r2.imongmama.online';
 
   let r2BaseUrl = localStorage.getItem('pf_r2_url') || DEFAULT_R2_URL;
+
+  /**
+   * Universal R2 fetch helper:
+   * 1. First tries relative path (/api/... or /data/...) which uses Cloudflare Pages _redirects proxy (ZERO CORS!)
+   * 2. Falls back to direct https://r2.imongmama.online/...
+   */
+  async function fetchR2(endpoint) {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+    // 1. Try relative path through Cloudflare Pages reverse-proxy
+    try {
+      const res = await fetch(cleanEndpoint, { cache: 'no-cache' });
+      if (res.ok) return res;
+    } catch (_) {}
+
+    // 2. Fallback to direct custom domain
+    const directUrl = `${r2BaseUrl}${cleanEndpoint}`;
+    return await fetch(directUrl);
+  }
 
   // Initialize Supabase Client for Realtime
   let supabase = null;
@@ -45,12 +62,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const vcardDungeonsCount = document.getElementById('vcardDungeonsCount');
   const vcardRunsCount = document.getElementById('vcardRunsCount');
   const vcardLastSync = document.getElementById('vcardLastSync');
+  const vcardRioLink = document.getElementById('vcardRioLink');
+  const vcardWclLink = document.getElementById('vcardWclLink');
 
   // Database Tab Elements
   const dbSearchInput = document.getElementById('dbSearchInput');
   const dbRealmFilter = document.getElementById('dbRealmFilter');
+  const dbTierFilter = document.getElementById('dbTierFilter');
   const dbRoleFilter = document.getElementById('dbRoleFilter');
   const dbClassFilter = document.getElementById('dbClassFilter');
+  const dbParseFilter = document.getElementById('dbParseFilter');
   const dbStatusFilter = document.getElementById('dbStatusFilter');
   const dbTableBody = document.getElementById('dbTableBody');
   const dbPageInfo = document.getElementById('dbPageInfo');
@@ -58,10 +79,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnDbPrevPage = document.getElementById('btnDbPrevPage');
   const btnDbNextPage = document.getElementById('btnDbNextPage');
   const dbTotalCountBadge = document.getElementById('dbTotalCountBadge');
-  const btnExportJson = document.getElementById('btnExportJson');
+  const btnExportDb = document.getElementById('btnExportDb');
 
   // Telemetry HUD Elements
   const statTotalPlayers = document.getElementById('statTotalPlayers');
+  const statCacheSize = document.getElementById('statCacheSize');
   const statEnrichedPlayers = document.getElementById('statEnrichedPlayers');
   const statEnrichProgress = document.getElementById('statEnrichProgress');
   const statEnrichPercent = document.getElementById('statEnrichPercent');
@@ -79,12 +101,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const playerStream = document.getElementById('playerStream');
   const livePlayerCounter = document.getElementById('livePlayerCounter');
 
-  // Settings Elements
-  const cfgR2Url = document.getElementById('cfgR2Url');
-  const btnSaveCloudSettings = document.getElementById('btnSaveCloudSettings');
-
-  if (cfgR2Url) cfgR2Url.value = r2BaseUrl;
-  if (btnExportJson) btnExportJson.href = `${r2BaseUrl}/data/rio_players_us.json`;
+  // Export Button link
+  if (btnExportDb) {
+    btnExportDb.addEventListener('click', () => {
+      window.open(`${r2BaseUrl}/data/rio_players_us.json`, '_blank');
+    });
+  }
 
   let currentMeta = null;
   let currentPage = 1;
@@ -121,6 +143,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       .replace(/[^a-z0-9-]/g, '');
   }
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, (m) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+  }
+
   // --------------------------------------------------------------------------
   // 1. Tab Switching
   // --------------------------------------------------------------------------
@@ -144,6 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const seenLogIds = new Set();
 
   function appendLog(level, msg, timestamp) {
+    if (!terminalBody) return;
     const ts = timestamp || new Date().toTimeString().split(' ')[0];
     const line = document.createElement('div');
     line.className = `log-line log-${level}`;
@@ -158,32 +188,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     `;
 
     terminalBody.appendChild(line);
-    if (chkAutoScroll.checked) {
+    if (chkAutoScroll && chkAutoScroll.checked) {
       terminalBody.scrollTop = terminalBody.scrollHeight;
     }
   }
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, (m) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[m]));
+  if (btnClearLog) {
+    btnClearLog.addEventListener('click', () => {
+      terminalBody.innerHTML = '';
+    });
   }
 
-  btnClearLog.addEventListener('click', () => {
-    terminalBody.innerHTML = '';
-  });
-
-  btnCopyLog.addEventListener('click', () => {
-    const text = Array.from(terminalBody.querySelectorAll('.log-line'))
-      .map(l => l.innerText)
-      .join('\n');
-    navigator.clipboard.writeText(text);
-    appendLog('info', 'Console logs copied to clipboard.');
-  });
+  if (btnCopyLog) {
+    btnCopyLog.addEventListener('click', () => {
+      const text = Array.from(terminalBody.querySelectorAll('.log-line'))
+        .map(l => l.innerText)
+        .join('\n');
+      navigator.clipboard.writeText(text);
+      appendLog('info', 'Console logs copied to clipboard.');
+    });
+  }
 
   // --------------------------------------------------------------------------
-  // 3. Load Realms Data (for realm priorities and analytics)
+  // 3. Load Realms Data (realms.json)
   // --------------------------------------------------------------------------
   let rawRealmsData = null;
 
@@ -213,25 +240,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       rawRealmsData = await res.json();
 
       const usRealms = rawRealmsData['US'] || [];
-      quickRealmSelect.innerHTML = '<option value="">All Realms (Auto-Detect)</option>';
-      dbRealmFilter.innerHTML = '<option value="all">All Realms</option>';
+      if (quickRealmSelect) {
+        quickRealmSelect.innerHTML = '<option value="">All Realms (Auto-Detect)</option>';
+        usRealms.forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r.name;
+          opt.textContent = `${r.name} (${r.priority === 1 ? '👑 Mega' : (r.priority === 2 ? '🔷 Mid' : '◽ Low')})`;
+          quickRealmSelect.appendChild(opt);
+        });
+      }
 
-      usRealms.forEach(r => {
-        const opt1 = document.createElement('option');
-        opt1.value = r.name;
-        opt1.textContent = `${r.name} (${r.priority === 1 ? '👑 Mega' : (r.priority === 2 ? '🔷 Mid' : '◽ Low')})`;
-        quickRealmSelect.appendChild(opt1);
-
-        const opt2 = document.createElement('option');
-        opt2.value = r.name;
-        opt2.textContent = r.name;
-        dbRealmFilter.appendChild(opt2);
-      });
+      if (dbRealmFilter) {
+        dbRealmFilter.innerHTML = '<option value="all">All Realms</option>';
+        usRealms.forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r.name;
+          opt.textContent = r.name;
+          dbRealmFilter.appendChild(opt);
+        });
+      }
 
       renderAnalyticsGrid(rawRealmsData);
       appendLog('success', 'Realms database loaded (US • EU • KR • TW).');
     } catch (e) {
-      appendLog('warn', `Notice: realms.json offline (${e.message}). Falling back to dynamic realm parsing.`);
+      appendLog('warn', `realms.json offline (${e.message}). Falling back to dynamic parsing.`);
     }
   }
 
@@ -240,7 +272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --------------------------------------------------------------------------
   async function loadMeta() {
     try {
-      const res = await fetch(`${r2BaseUrl}/api/us/meta.json?t=${Date.now()}`);
+      const res = await fetchR2('/api/us/meta.json');
       if (!res.ok) throw new Error(`R2 meta returned HTTP ${res.status}`);
       currentMeta = await res.json();
 
@@ -249,7 +281,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       appendLog('success', `Connected to R2 Storage: ${currentMeta.totalPlayers.toLocaleString()} players across ${totalPages} pages.`);
     } catch (err) {
       console.warn('Meta fetch warning:', err);
-      appendLog('info', `R2 endpoint: ${r2BaseUrl} (Public Bucket access pending or connecting...)`);
+      appendLog('info', `R2 endpoint: ${r2BaseUrl}`);
     }
   }
 
@@ -260,11 +292,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const pct = total > 0 ? ((enriched / total) * 100).toFixed(1) : '0.0';
 
     if (statTotalPlayers) statTotalPlayers.textContent = total.toLocaleString();
+    if (statCacheSize) statCacheSize.textContent = `${total.toLocaleString()} of 494,116 US Players (${((total / 494116) * 100).toFixed(2)}%)`;
     if (statEnrichedPlayers) statEnrichedPlayers.textContent = enriched.toLocaleString();
     if (statPendingPlayers) statPendingPlayers.textContent = pending.toLocaleString();
     if (statEnrichProgress) statEnrichProgress.style.width = `${pct}%`;
     if (statEnrichPercent) statEnrichPercent.textContent = `${pct}% ENRICHED`;
-    if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${total.toLocaleString()} Players Stored`;
+    if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${total.toLocaleString()} Players Recorded`;
     if (footerMetaDate) footerMetaDate.textContent = `Database: ${total.toLocaleString()} Players Stored in R2`;
   }
 
@@ -274,43 +307,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentPage = pageNum;
 
     const pageStr = String(pageNum).padStart(4, '0');
-    dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;"><div class="spinner-dot" style="margin: 0 auto 10px;"></div>Loading page ${pageNum} from Cloudflare R2...</td></tr>`;
+    if (dbTableBody) {
+      dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;"><div class="spinner-dot" style="margin: 0 auto 10px;"></div>Loading page ${pageNum} from Cloudflare R2...</td></tr>`;
+    }
 
     try {
-      const res = await fetch(`${r2BaseUrl}/api/us/page_${pageStr}.json?t=${Date.now()}`);
+      const res = await fetchR2(`/api/us/page_${pageStr}.json`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       currentLoadedPagePlayers = data.players || [];
       renderDatabaseTable(currentLoadedPagePlayers);
 
-      dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages}`;
-      dbPageInfo.textContent = `Showing ${(currentPage - 1) * 50 + 1} to ${Math.min(currentPage * 50, currentMeta?.totalPlayers || 131723)} of ${(currentMeta?.totalPlayers || 131723).toLocaleString()} players`;
-      btnDbPrevPage.disabled = currentPage <= 1;
-      btnDbNextPage.disabled = currentPage >= totalPages;
+      if (dbCurrentPageNum) dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages}`;
+      if (dbPageInfo) dbPageInfo.textContent = `Showing ${(currentPage - 1) * 50 + 1} to ${Math.min(currentPage * 50, currentMeta?.totalPlayers || 131723)} of ${(currentMeta?.totalPlayers || 131723).toLocaleString()} entries`;
+      if (btnDbPrevPage) btnDbPrevPage.disabled = currentPage <= 1;
+      if (btnDbNextPage) btnDbNextPage.disabled = currentPage >= totalPages;
     } catch (err) {
-      dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 30px;">Failed to load page from R2: ${escapeHtml(err.message)}<br><small style="color: var(--text-muted); margin-top: 6px; display: inline-block;">Make sure public access or custom domain <code>${r2BaseUrl}</code> is enabled in your Cloudflare R2 settings.</small></td></tr>`;
+      if (dbTableBody) {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 30px;">Failed to load page from R2: ${escapeHtml(err.message)}<br><small style="color: var(--text-muted); margin-top: 6px; display: inline-block;">Make sure public access or custom domain <code>${r2BaseUrl}</code> is enabled in your Cloudflare R2 settings.</small></td></tr>`;
+      }
     }
   }
 
-  btnDbPrevPage.addEventListener('click', () => {
-    if (currentPage > 1) loadPage(currentPage - 1);
-  });
+  if (btnDbPrevPage) {
+    btnDbPrevPage.addEventListener('click', () => {
+      if (currentPage > 1) loadPage(currentPage - 1);
+    });
+  }
 
-  btnDbNextPage.addEventListener('click', () => {
-    if (currentPage < totalPages) loadPage(currentPage + 1);
-  });
+  if (btnDbNextPage) {
+    btnDbNextPage.addEventListener('click', () => {
+      if (currentPage < totalPages) loadPage(currentPage + 1);
+    });
+  }
 
   // --------------------------------------------------------------------------
-  // 5. Search in Database (Uses Alphabetical R2 Buckets)
+  // 5. Search in Database (Alphabetical R2 Buckets)
   // --------------------------------------------------------------------------
   let searchDebounceTimer = null;
 
-  dbSearchInput.addEventListener('input', () => {
-    clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(performDatabaseSearch, 250);
-  });
+  if (dbSearchInput) {
+    dbSearchInput.addEventListener('input', () => {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(performDatabaseSearch, 250);
+    });
+  }
 
-  [dbRealmFilter, dbRoleFilter, dbClassFilter, dbStatusFilter].forEach(filterEl => {
+  [dbRealmFilter, dbTierFilter, dbRoleFilter, dbClassFilter, dbParseFilter, dbStatusFilter].forEach(filterEl => {
     if (filterEl) {
       filterEl.addEventListener('change', () => {
         if (isSearchActive && cachedSearchBucket) {
@@ -323,13 +366,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   async function performDatabaseSearch() {
-    const query = dbSearchInput.value.trim().toLowerCase();
+    const query = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
     if (!query) {
       isSearchActive = false;
       renderDatabaseTable(currentLoadedPagePlayers);
-      dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages}`;
-      btnDbPrevPage.disabled = currentPage <= 1;
-      btnDbNextPage.disabled = currentPage >= totalPages;
+      if (dbCurrentPageNum) dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages}`;
+      if (btnDbPrevPage) btnDbPrevPage.disabled = currentPage <= 1;
+      if (btnDbNextPage) btnDbNextPage.disabled = currentPage >= totalPages;
       return;
     }
 
@@ -338,14 +381,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bucket = /[a-z]/.test(firstChar) ? firstChar : 'misc';
 
     if (cachedSearchBucketChar !== bucket) {
-      dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;"><div class="spinner-dot" style="margin: 0 auto 10px;"></div>Querying R2 search index [${bucket.toUpperCase()}]...</td></tr>`;
+      if (dbTableBody) {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;"><div class="spinner-dot" style="margin: 0 auto 10px;"></div>Querying R2 search index [${bucket.toUpperCase()}]...</td></tr>`;
+      }
       try {
-        const res = await fetch(`${r2BaseUrl}/api/us/search_${bucket}.json`);
+        const res = await fetchR2(`/api/us/search_${bucket}.json`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         cachedSearchBucket = await res.json();
         cachedSearchBucketChar = bucket;
       } catch (err) {
-        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 20px;">Search index loading error: ${escapeHtml(err.message)}</td></tr>`;
+        if (dbTableBody) {
+          dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 20px;">Search index loading error: ${escapeHtml(err.message)}</td></tr>`;
+        }
         return;
       }
     }
@@ -355,17 +402,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function applyFiltersToSearchBucket() {
     if (!Array.isArray(cachedSearchBucket)) return;
-    const query = dbSearchInput.value.trim().toLowerCase();
-    const realmVal = dbRealmFilter.value;
-    const roleVal = dbRoleFilter.value;
-    const classVal = dbClassFilter.value;
-    const statusVal = dbStatusFilter.value;
+    const query = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
+    const realmVal = dbRealmFilter ? dbRealmFilter.value : 'all';
+    const tierVal = dbTierFilter ? dbTierFilter.value : 'all';
+    const roleVal = dbRoleFilter ? dbRoleFilter.value : 'all';
+    const classVal = dbClassFilter ? dbClassFilter.value : 'all';
+    const parseVal = dbParseFilter ? parseFloat(dbParseFilter.value) || 0 : 0;
+    const statusVal = dbStatusFilter ? dbStatusFilter.value : 'all';
 
     const filtered = cachedSearchBucket.filter(p => {
       if (query && !p.name.toLowerCase().includes(query)) return false;
       if (realmVal !== 'all' && p.realm !== realmVal) return false;
+      if (tierVal !== 'all') {
+        const pTier = getRealmPriority(p.realm);
+        if (String(pTier) !== tierVal) return false;
+      }
       if (roleVal !== 'all' && p.role !== roleVal) return false;
       if (classVal !== 'all' && p.class !== classVal) return false;
+      const median = p.medianParse || p.median || 0;
+      if (parseVal > 0 && median < parseVal) return false;
       if (statusVal === 'enriched' && (!p.enriched || p.unlogged)) return false;
       if (statusVal === 'unlogged' && !p.unlogged) return false;
       if (statusVal === 'discovered' && p.enriched) return false;
@@ -373,13 +428,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     renderDatabaseTable(filtered.slice(0, 100));
-    dbPageInfo.textContent = `Found ${filtered.length.toLocaleString()} matching characters (showing top 100)`;
-    dbCurrentPageNum.textContent = `Search Mode`;
-    btnDbPrevPage.disabled = true;
-    btnDbNextPage.disabled = true;
+    if (dbPageInfo) dbPageInfo.textContent = `Found ${filtered.length.toLocaleString()} matching characters (showing top 100)`;
+    if (dbCurrentPageNum) dbCurrentPageNum.textContent = `Search Mode`;
+    if (btnDbPrevPage) btnDbPrevPage.disabled = true;
+    if (btnDbNextPage) btnDbNextPage.disabled = true;
   }
 
   function renderDatabaseTable(players) {
+    if (!dbTableBody) return;
     dbTableBody.innerHTML = '';
     if (!players || players.length === 0) {
       dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">No players matching filter criteria.</td></tr>`;
@@ -453,6 +509,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function applyParsePill(pillElement, score) {
+    if (!pillElement) return;
     pillElement.className = 'parse-pill';
     const display = typeof score === 'number' ? score.toFixed(1) : score;
     if (score >= 100) {
@@ -482,10 +539,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --------------------------------------------------------------------------
   // 6. Quick Player Verification
   // --------------------------------------------------------------------------
-  btnQuickSearch.addEventListener('click', performQuickVerification);
-  quickPlayerInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') performQuickVerification();
-  });
+  if (btnQuickSearch && quickPlayerInput) {
+    btnQuickSearch.addEventListener('click', performQuickVerification);
+    quickPlayerInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') performQuickVerification();
+    });
+  }
 
   async function performQuickVerification() {
     let rawInput = quickPlayerInput.value.trim();
@@ -495,7 +554,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let charName = rawInput;
-    let selectedRealm = quickRealmSelect.value;
+    let selectedRealm = quickRealmSelect ? quickRealmSelect.value : '';
 
     if (rawInput.includes('-')) {
       const parts = rawInput.split('-');
@@ -510,7 +569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let found = null;
     try {
-      const res = await fetch(`${r2BaseUrl}/api/us/search_${bucket}.json`);
+      const res = await fetchR2(`/api/us/search_${bucket}.json`);
       if (res.ok) {
         const bucketData = await res.json();
         found = bucketData.find(p =>
@@ -522,20 +581,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.warn('Quick search lookup error:', err);
     }
 
-    verificationResultCard.style.display = 'block';
+    if (verificationResultCard) verificationResultCard.style.display = 'block';
 
     if (found) {
-      vcardStatusBadge.className = 'vcard-status-pill verified';
-      vcardStatusText.textContent = (found.enriched && !found.unlogged && (found.medianParse || 0) > 0) ? 'WCL ENRICHED & STORED' : (found.unlogged ? 'RAIDER.IO BASELINE (UNLOGGED)' : 'RAIDER.IO TRACKED (QUEUED)');
-      vcardName.textContent = found.name;
-      vcardRealm.textContent = `— ${found.realm} (${found.region || 'US'})`;
-      vcardMeta.textContent = `${found.spec || ''} ${found.class || ''} • ${found.rioScore ? found.rioScore.toFixed(1) + ' Raider.IO Score' : 'Season 2 Mythic+'}`;
+      if (vcardStatusBadge) vcardStatusBadge.className = 'vcard-status-pill verified';
+      if (vcardStatusText) vcardStatusText.textContent = (found.enriched && !found.unlogged && (found.medianParse || 0) > 0) ? 'WCL ENRICHED & STORED' : (found.unlogged ? 'RAIDER.IO BASELINE (UNLOGGED)' : 'RAIDER.IO TRACKED (QUEUED)');
+      if (vcardName) vcardName.textContent = found.name;
+      if (vcardRealm) vcardRealm.textContent = `— ${found.realm} (${found.region || 'US'})`;
+      if (vcardMeta) vcardMeta.textContent = `${found.spec || ''} ${found.class || ''} • ${found.rioScore ? found.rioScore.toFixed(1) + ' Raider.IO Score' : 'Season 2 Mythic+'}`;
 
       const classColor = CLASS_COLORS[found.class] || '#fff';
-      vcardClassCrest.style.borderColor = classColor;
-      vcardClassCrest.style.color = classColor;
-      vcardClassCrest.style.boxShadow = `0 0 10px ${classColor}40`;
-      vcardClassCrest.textContent = (found.class || 'C').split(' ').map(w => w[0]).join('');
+      if (vcardClassCrest) {
+        vcardClassCrest.style.borderColor = classColor;
+        vcardClassCrest.style.color = classColor;
+        vcardClassCrest.style.boxShadow = `0 0 10px ${classColor}40`;
+        vcardClassCrest.textContent = (found.class || 'C').split(' ').map(w => w[0]).join('');
+      }
 
       let metricTitle = '';
       let roleIcon = '';
@@ -550,59 +611,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         roleIcon = '⚔️ DPS';
       }
 
-      vcardMetricLabel.innerHTML = metricTitle;
+      if (vcardMetricLabel) vcardMetricLabel.innerHTML = metricTitle;
       const median = found.medianParse || 0;
       if (found.enriched && median > 0) {
-        vcardMedianScore.textContent = median.toFixed(1);
-        vcardMetricExplanation.innerHTML = `Evaluated across Season Dungeons using authentic Warcraft Logs clearance metrics.`;
-        applyParsePill(vcardParsePill, median);
+        if (vcardMedianScore) vcardMedianScore.textContent = median.toFixed(1);
+        if (vcardMetricExplanation) vcardMetricExplanation.innerHTML = `Evaluated across Season Dungeons using authentic Warcraft Logs clearance metrics.`;
+        if (vcardParsePill) applyParsePill(vcardParsePill, median);
       } else if (found.unlogged) {
-        vcardMedianScore.textContent = (found.rioScore || 0).toFixed(1);
-        vcardParsePill.className = 'parse-pill pill-rare';
-        vcardParsePill.textContent = 'IO Baseline';
-        vcardMetricExplanation.innerHTML = `High-key pusher (${found.rioScore} M+ IO) with no public Warcraft Logs parses. Baseline derived from authentic Raider.IO runs.`;
+        if (vcardMedianScore) vcardMedianScore.textContent = (found.rioScore || 0).toFixed(1);
+        if (vcardParsePill) {
+          vcardParsePill.className = 'parse-pill pill-rare';
+          vcardParsePill.textContent = 'IO Baseline';
+        }
+        if (vcardMetricExplanation) vcardMetricExplanation.innerHTML = `High-key pusher (${found.rioScore} M+ IO) with no public Warcraft Logs parses. Baseline derived from authentic Raider.IO runs.`;
       } else {
-        vcardMedianScore.textContent = (found.rioScore || 0).toFixed(1);
-        vcardParsePill.className = 'parse-pill pill-uncommon';
-        vcardParsePill.textContent = 'RIO Tracked';
-        vcardMetricExplanation.innerHTML = `Tracked in cloud registry. Queued for automatic WCL GraphQL combat parse lookup in an upcoming 5-minute tick.`;
+        if (vcardMedianScore) vcardMedianScore.textContent = (found.rioScore || 0).toFixed(1);
+        if (vcardParsePill) {
+          vcardParsePill.className = 'parse-pill pill-uncommon';
+          vcardParsePill.textContent = 'RIO Tracked';
+        }
+        if (vcardMetricExplanation) vcardMetricExplanation.innerHTML = `Tracked in cloud registry. Queued for automatic WCL GraphQL combat parse lookup in an upcoming 5-minute tick.`;
       }
 
-      vcardRoleVal.textContent = roleIcon;
-      vcardDungeonsCount.textContent = `Season Mythic+`;
-      vcardRunsCount.textContent = `${found.highestKey ? '+' + found.highestKey + ' Key' : 'Active Pusher'}`;
-      vcardLastSync.textContent = 'Cloudflare R2';
+      if (vcardRoleVal) vcardRoleVal.textContent = roleIcon;
+      if (vcardDungeonsCount) vcardDungeonsCount.textContent = `8 / 8 Active`;
+      if (vcardRunsCount) vcardRunsCount.textContent = `${found.highestKey ? '+' + found.highestKey + ' Key' : 'Active Pusher'}`;
+      if (vcardLastSync) vcardLastSync.textContent = 'Cloudflare R2';
 
       const realmSlug = cleanRealmSlug(found.realmSlug || found.realm);
-      const vcardRioLink = document.getElementById('vcardRioLink');
-      const vcardWclLink = document.getElementById('vcardWclLink');
       if (vcardRioLink) vcardRioLink.href = `https://raider.io/characters/us/${realmSlug}/${encodeURIComponent(found.name)}`;
       if (vcardWclLink) vcardWclLink.href = `https://www.warcraftlogs.com/character/us/${realmSlug}/${encodeURIComponent(found.name)}`;
 
       appendLog('success', `Found character in R2: ${found.name}-${found.realm} • ${found.role} • R.IO: ${found.rioScore}`);
     } else {
-      vcardStatusBadge.className = 'vcard-status-pill unverified';
-      vcardStatusText.textContent = 'NOT IN DATABASE';
-      vcardName.textContent = charName;
-      vcardRealm.textContent = selectedRealm ? `— ${selectedRealm}` : '— Realm Unknown';
-      vcardMeta.textContent = 'No recorded Mythic+ run in current harvested cache';
-      vcardClassCrest.style.borderColor = '#64748b';
-      vcardClassCrest.style.color = '#64748b';
-      vcardClassCrest.textContent = '?';
+      if (vcardStatusBadge) {
+        vcardStatusBadge.className = 'vcard-status-pill unverified';
+        vcardStatusBadge.textContent = 'NOT IN DATABASE';
+      }
+      if (vcardName) vcardName.textContent = charName;
+      if (vcardRealm) vcardRealm.textContent = selectedRealm ? `— ${selectedRealm}` : '— Realm Unknown';
+      if (vcardMeta) vcardMeta.textContent = 'No recorded Mythic+ run in current harvested cache';
+      if (vcardClassCrest) {
+        vcardClassCrest.style.borderColor = '#64748b';
+        vcardClassCrest.style.color = '#64748b';
+        vcardClassCrest.textContent = '?';
+      }
 
-      vcardMetricLabel.innerHTML = '⚠️ NO RECORD FOUND';
-      vcardMedianScore.textContent = '0.0';
-      vcardParsePill.className = 'parse-pill pill-common';
-      vcardParsePill.textContent = 'UNVERIFIED';
-      vcardMetricExplanation.innerHTML = 'This player has not appeared in current scanned leaderboards. The autonomous engine will sweep additional leaderboard pages continuously.';
-      vcardRoleVal.textContent = 'Unknown';
-      vcardDungeonsCount.textContent = '0';
-      vcardRunsCount.textContent = '0 Runs';
-      vcardLastSync.textContent = 'Never';
+      if (vcardMetricLabel) vcardMetricLabel.innerHTML = '⚠️ NO RECORD FOUND';
+      if (vcardMedianScore) vcardMedianScore.textContent = '0.0';
+      if (vcardParsePill) {
+        vcardParsePill.className = 'parse-pill pill-common';
+        vcardParsePill.textContent = 'UNVERIFIED';
+      }
+      if (vcardMetricExplanation) vcardMetricExplanation.innerHTML = 'This player has not appeared in current scanned leaderboards. The autonomous engine sweeps additional leaderboard pages continuously.';
+      if (vcardRoleVal) vcardRoleVal.textContent = 'Unknown';
+      if (vcardDungeonsCount) vcardDungeonsCount.textContent = '0';
+      if (vcardRunsCount) vcardRunsCount.textContent = '0 Runs';
+      if (vcardLastSync) vcardLastSync.textContent = 'Never';
 
       const realmSlug = cleanRealmSlug(selectedRealm || 'illidan');
-      const vcardRioLink = document.getElementById('vcardRioLink');
-      const vcardWclLink = document.getElementById('vcardWclLink');
       if (vcardRioLink) vcardRioLink.href = `https://raider.io/characters/us/${realmSlug}/${encodeURIComponent(charName)}`;
       if (vcardWclLink) vcardWclLink.href = `https://www.warcraftlogs.com/character/us/${realmSlug}/${encodeURIComponent(charName)}`;
 
@@ -611,7 +678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // --------------------------------------------------------------------------
-  // 7. Live Stream & Feed Rendering
+  // 7. Live Stream Feed
   // --------------------------------------------------------------------------
   function streamPlayerCard(player) {
     if (!playerStream) return;
@@ -788,7 +855,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const isUs = r.code === 'US';
       const harvested = isUs ? (currentMeta?.totalPlayers || 131723) : 0;
-      const enriched = isUs ? (currentMeta?.enrichedPlayers || 10) : 0;
+      const enriched = isUs ? (currentMeta?.enrichedPlayers || 30) : 0;
 
       const scrapePct = census > 0 ? ((harvested / census) * 100).toFixed(1) : '0.0';
       const enrichPct = harvested > 0 ? ((enriched / harvested) * 100).toFixed(1) : '0.0';
@@ -807,8 +874,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
           </td>
           <td>
-            <strong style="color: var(--cyan);">${totalRealms} Realms</strong>
-            <div style="font-size: 10px; color: var(--text-muted);">👑 ${p1Count} Mega • 🔷 ${p2Count} Mid • ◽ ${p3Count} Low</div>
+            <strong style="color: var(--cyan); font-family: var(--font-number);">${totalRealms} Realms</strong>
+            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">👑 ${p1Count} Mega • 🔷 ${p2Count} Mid • ◽ ${p3Count} Low</div>
           </td>
           <td><strong style="font-family: var(--font-mono); color: #fff;">${census.toLocaleString()}</strong></td>
           <td>
@@ -842,25 +909,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // --------------------------------------------------------------------------
-  // 10. Settings Handler
-  // --------------------------------------------------------------------------
-  if (btnSaveCloudSettings && cfgR2Url) {
-    btnSaveCloudSettings.addEventListener('click', () => {
-      const val = cfgR2Url.value.trim().replace(/\/+$/, '');
-      if (val) {
-        r2BaseUrl = val;
-        localStorage.setItem('pf_r2_url', r2BaseUrl);
-        if (btnExportJson) btnExportJson.href = `${r2BaseUrl}/data/rio_players_us.json`;
-        appendLog('success', `R2 endpoint updated to: ${r2BaseUrl}`);
-        loadMeta();
-        loadPage(1);
-        alert('Settings saved successfully!');
-      }
-    });
-  }
-
-  // --------------------------------------------------------------------------
-  // 11. Master Access Passcode Gate
+  // 10. Master Access Passcode Gate
   // --------------------------------------------------------------------------
   const loginGateOverlay = document.getElementById('loginGateOverlay');
   const formMasterKey = document.getElementById('formMasterKey');
@@ -871,12 +920,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   const userEmailDisplay = document.getElementById('userEmailDisplay');
   const btnLogout = document.getElementById('btnLogout');
   const btnToggleLoginPasscode = document.getElementById('btnToggleLoginPasscode');
+  const cfgMasterPasscode = document.getElementById('cfgMasterPasscode');
+  const btnToggleMasterPasscode = document.getElementById('btnToggleMasterPasscode');
 
   if (btnToggleLoginPasscode && loginMasterPasscode) {
     btnToggleLoginPasscode.addEventListener('click', () => {
       const isPwd = loginMasterPasscode.type === 'password';
       loginMasterPasscode.type = isPwd ? 'text' : 'password';
       btnToggleLoginPasscode.textContent = isPwd ? 'Hide' : 'Show';
+    });
+  }
+
+  if (btnToggleMasterPasscode && cfgMasterPasscode) {
+    btnToggleMasterPasscode.addEventListener('click', () => {
+      const isPwd = cfgMasterPasscode.type === 'password';
+      cfgMasterPasscode.type = isPwd ? 'text' : 'password';
+      btnToggleMasterPasscode.textContent = isPwd ? 'Hide' : 'Show';
     });
   }
 
@@ -908,18 +967,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (formMasterKey) {
     formMasterKey.addEventListener('submit', async (e) => {
       e.preventDefault();
-      loginErrorBanner.style.display = 'none';
+      if (loginErrorBanner) loginErrorBanner.style.display = 'none';
 
-      const entered = loginMasterPasscode.value.trim();
+      const entered = loginMasterPasscode ? loginMasterPasscode.value.trim() : '';
       if (!entered) {
-        loginErrorBanner.textContent = 'Please enter your master passcode.';
-        loginErrorBanner.style.display = 'block';
+        if (loginErrorBanner) {
+          loginErrorBanner.textContent = 'Please enter your master passcode.';
+          loginErrorBanner.style.display = 'block';
+        }
         return;
       }
 
       const btnSubmit = document.getElementById('btnMasterKeySubmit');
-      const origText = btnSubmit.innerHTML;
-      btnSubmit.innerHTML = '<span>VERIFYING PASSCODE...</span>';
+      const origText = btnSubmit ? btnSubmit.innerHTML : '';
+      if (btnSubmit) btnSubmit.innerHTML = '<span>VERIFYING PASSCODE...</span>';
 
       try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.master_passcode&select=value`, {
@@ -939,7 +1000,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (entered === validPasscode) {
           const sessionData = { user: 'Master Admin', timestamp: Date.now() };
-          if (chkRememberMe.checked) {
+          if (chkRememberMe && chkRememberMe.checked) {
             localStorage.setItem('pf_auth_session', JSON.stringify(sessionData));
           } else {
             sessionStorage.setItem('pf_auth_session', JSON.stringify(sessionData));
@@ -949,14 +1010,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (userEmailDisplay) userEmailDisplay.textContent = 'Master Admin';
           appendLog('success', 'Studio unlocked: Master Admin authenticated.');
         } else {
-          loginErrorBanner.textContent = 'Incorrect Master Passcode. Access Denied.';
-          loginErrorBanner.style.display = 'block';
+          if (loginErrorBanner) {
+            loginErrorBanner.textContent = 'Incorrect Master Passcode. Access Denied.';
+            loginErrorBanner.style.display = 'block';
+          }
         }
       } catch (err) {
-        loginErrorBanner.textContent = `Verification error: ${err.message}`;
-        loginErrorBanner.style.display = 'block';
+        if (loginErrorBanner) {
+          loginErrorBanner.textContent = `Verification error: ${err.message}`;
+          loginErrorBanner.style.display = 'block';
+        }
       } finally {
-        btnSubmit.innerHTML = origText;
+        if (btnSubmit) btnSubmit.innerHTML = origText;
       }
     });
   }

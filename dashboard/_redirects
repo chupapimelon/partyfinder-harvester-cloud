@@ -1,0 +1,2 @@
+/api/* https://r2.imongmama.online/api/:splat 200
+/data/* https://r2.imongmama.online/data/:splat 200

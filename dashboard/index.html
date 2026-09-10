@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PartyFinder Cloud Studio v2 - Realm Harvester &amp; Player Inspector</title>
+  <title>PartyFinder Cloud Studio v2 - Realm Harvester & Player Inspector</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="preload" href="fonts/Naowh.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/GothamNarrowUltra.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=cloud_v1">
+  <link rel="stylesheet" href="styles.css?v=btn_uniform_v5">
 </head>
 <body>
   <div class="studio-app">
@@ -21,8 +21,8 @@
           <img class="crest-icon" src="assets/icon.png" alt="PartyFinder Crest">
         </div>
         <div class="brand-text">
-          <div class="brand-title">PARTYFINDER <span class="brand-tag">CLOUD STUDIO</span></div>
-          <div class="brand-sub">24/7 Autonomous GitHub Actions Engine &amp; Cloudflare R2 Storage</div>
+          <div class="brand-title">PARTYFINDER <span class="brand-tag">STUDIO v2</span></div>
+          <div class="brand-sub">Strategy 1 Deep Realm Harvester &amp; Role Metric Engine</div>
         </div>
       </div>
 
@@ -76,28 +76,28 @@
               <div class="phase-title" id="autoPilotPhaseTitle">AUTONOMOUS HYBRID ENGINE: RAIDER.IO &amp; WCL PARSER</div>
               <div class="phase-detail" id="autoPilotPhaseDetail">Running 24/7 on GitHub Actions • Data persisted to Cloudflare R2 • Realtime Supabase Sync</div>
               <div class="priority-tier-pills" id="autoPilotTierPills">
-                <span class="tier-pill pill-p1" id="pillP1Count"><img src="assets/raiderio_logo.png" class="tier-brand-img" alt="Raider.IO"> Raider.IO Leaderboard</span>
-                <span class="tier-pill pill-p2" id="pillP2Count"><img src="assets/warcraftlogs_logo.png" class="tier-brand-img" alt="WCL"> WCL Combat Parser</span>
+                <span class="tier-pill pill-p1" id="pillP1Count"><img src="assets/raiderio_logo.png" class="tier-brand-img" alt="Raider.IO"> Raider.IO Ready</span>
+                <span class="tier-pill pill-p2" id="pillP2Count"><img src="assets/warcraftlogs_logo.png" class="tier-brand-img" alt="WCL"> WCL Parser Ready</span>
                 <span class="tier-pill pill-p3" id="pillP3Count">🚀 Cloudflare CDN Ready</span>
               </div>
             </div>
           </div>
 
           <div class="banner-right">
-            <div class="cycle-counter pace-counter" id="autoPilotPaceBox" title="Enrichment Pace per GitHub Actions Tick">
+            <div class="cycle-counter pace-counter" id="autoPilotPaceBox" title="Dynamic pace per GitHub Actions Tick">
               <span class="cycle-label">ENRICH PACE</span>
               <span class="cycle-num pace-num" id="autoPilotPaceDisplay" style="color: var(--cyan); font-size: 13px; font-weight: 700;">10 / TICK</span>
             </div>
             <div class="cycle-counter timer-counter" id="autoPilotTimerBox">
-              <span class="cycle-label" id="autoPilotTimerLabel">CRON INTERVAL</span>
+              <span class="cycle-label" id="autoPilotTimerLabel">CRON SCHEDULE</span>
               <span class="cycle-num timer-num" id="autoPilotTimerCount" style="color: #10b981;">5 MIN</span>
             </div>
             <div class="cycle-counter">
-              <span class="cycle-label">STORAGE</span>
-              <span class="cycle-num" id="autoPilotRealmCount">R2 BUCKET</span>
+              <span class="cycle-label">ACTIVE ENGINE</span>
+              <span class="cycle-num" id="autoPilotRealmCount">RIO + WCL</span>
             </div>
-            <a href="https://github.com/chupapimelon/partyfinder-harvester-cloud/actions" target="_blank" class="btn btn-autopilot" id="btnViewActions" style="text-decoration: none;">
-              <span>⚡ VIEW WORKFLOWS</span>
+            <a href="https://github.com/chupapimelon/partyfinder-harvester-cloud/actions" target="_blank" class="btn btn-autopilot" id="btnToggleAutoPilot" style="text-decoration: none;">
+              <span id="btnAutoPilotText">⚡ VIEW WORKFLOWS</span>
             </a>
           </div>
         </div>
@@ -109,7 +109,7 @@
               <div class="stat-meta">
                 <span class="stat-title">TOTAL TRACKED PLAYERS</span>
                 <div class="stat-main">
-                  <span class="stat-number" id="statTotalPlayers">131,723</span>
+                  <span class="stat-number" id="statTotalPlayers">0</span>
                   <span class="stat-unit">players</span>
                 </div>
               </div>
@@ -120,7 +120,7 @@
               </div>
             </div>
             <div class="stat-footer">
-              <span class="badge badge-soft-info">R2 CLOUD STORAGE</span>
+              <span class="badge badge-soft-info">RAIDER.IO POOL</span>
               <span class="stat-sub" id="statCacheSize">100% Real Players • IO Score DESC</span>
             </div>
           </div>
@@ -130,7 +130,7 @@
               <div class="stat-meta">
                 <span class="stat-title">WCL COMBAT ENRICHED</span>
                 <div class="stat-main">
-                  <span class="stat-number" id="statEnrichedPlayers">10</span>
+                  <span class="stat-number" id="statEnrichedPlayers">0</span>
                   <span class="stat-unit">parses</span>
                 </div>
               </div>
@@ -141,244 +141,291 @@
               </div>
             </div>
             <div class="stat-progress-bar">
-              <div class="progress-fill fill-emerald" id="statEnrichProgress" style="width: 0.1%;"></div>
+              <div class="progress-fill fill-emerald" id="statEnrichProgress" style="width: 0%;"></div>
             </div>
             <div class="stat-footer">
-              <span class="badge badge-soft-success" id="statEnrichPercent">0.1% ENRICHED</span>
-              <span class="stat-sub" id="statEnrichRate">Continuous 24/7 WCL Processing</span>
+              <span class="badge badge-soft-success" id="statEnrichPercent">0% ENRICHED</span>
+              <span class="stat-sub">Role median zoneRankings</span>
             </div>
           </div>
 
           <div class="card stat-card">
             <div class="stat-header">
               <div class="stat-meta">
-                <span class="stat-title">ENRICHMENT QUEUE</span>
+                <span class="stat-title">PENDING ENRICHMENT QUEUE</span>
                 <div class="stat-main">
-                  <span class="stat-number" id="statPendingPlayers">131,713</span>
+                  <span class="stat-number" id="statPendingPlayers">0</span>
                   <span class="stat-unit">queued</span>
                 </div>
               </div>
               <div class="avatar-sm">
                 <span class="avatar-title bg-warning-subtle text-amber rounded-circle">
-                  <i class="bx bx-time-five font-size-22"></i>
+                  <i class="bx bx-layer font-size-22"></i>
                 </span>
               </div>
             </div>
             <div class="stat-footer">
-              <span class="badge badge-soft-warning">PENDING WCL</span>
-              <span class="stat-sub" id="statQueueDetail">~2,880 players processed/day</span>
+              <span class="badge badge-soft-warning">PRIORITIZED QUEUE</span>
+              <span class="stat-sub">Highest Raider.IO Score First</span>
             </div>
           </div>
 
           <div class="card stat-card">
             <div class="stat-header">
               <div class="stat-meta">
-                <span class="stat-title">WCL API RATE LIMIT</span>
+                <span class="stat-title">HOURLY WCL BUDGET</span>
                 <div class="stat-main">
-                  <span class="stat-number" id="statWclPoints">3,600</span>
-                  <span class="stat-unit">pts / hr</span>
+                  <span class="stat-number" id="statPointsSpent">0</span>
+                  <span class="stat-unit" id="statPointsLimit">/ 3,600 pts</span>
                 </div>
               </div>
               <div class="avatar-sm">
-                <span class="avatar-title bg-primary-subtle text-primary rounded-circle">
-                  <i class="bx bx-pulse font-size-22"></i>
+                <span class="avatar-title bg-purple-subtle text-purple rounded-circle">
+                  <i class="bx bx-timer font-size-22"></i>
                 </span>
               </div>
             </div>
-            <div class="stat-progress-bar">
-              <div class="progress-fill fill-cyan" id="statWclProgress" style="width: 100%;"></div>
-            </div>
             <div class="stat-footer">
-              <span class="badge badge-soft-primary" id="statWclTier">STANDARD TIER</span>
-              <span class="stat-sub" id="statWclStatus">720 / 3,600 pts/hr used (~20%)</span>
+              <span class="badge badge-soft-purple" id="statPointsRemaining">3,600 LEFT</span>
+              <span class="stat-sub" id="statResetCountdown">Reset: 60m 00s</span>
             </div>
           </div>
         </div>
 
-        <!-- Quick Player Verification Hub (Option C) -->
-        <div class="verification-hub card">
-          <div class="hub-header">
-            <div class="hub-title-row">
-              <div class="hub-icon-wrap">
-                <i class="bx bx-search-alt-2"></i>
-              </div>
-              <div>
-                <h3 class="hub-title">Quick Player Verification</h3>
-                <p class="hub-subtitle">Instantly verify any player's parsed performance scores and combat validity from the cloud registry</p>
-              </div>
+        <!-- QUICK PLAYER VERIFICATION & SEARCH BAR (Option C) -->
+        <div class="quick-search-section card">
+          <div class="quick-search-header">
+            <div class="qs-title-wrap">
+              <svg class="qs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <div class="qs-title">QUICK PLAYER VERIFICATION</div>
+              <span class="qs-badge">Check Scraped Database</span>
             </div>
+            <div class="qs-sub">Search any player to instantly verify if their role-specific <strong>Median Perf. Avg</strong> is stored in our database.</div>
           </div>
 
-          <div class="hub-search-bar">
-            <div class="search-input-group">
-              <i class="bx bx-user search-icon"></i>
-              <input type="text" id="quickPlayerInput" class="search-input" placeholder="Enter Character Name (e.g. Gregxo, Naowh, Dhaubbf)..." autocomplete="off">
+          <div class="quick-search-form">
+            <div class="qs-input-group">
+              <span class="input-icon">👤</span>
+              <input type="text" id="quickPlayerInput" class="qs-input" placeholder="Character Name (e.g. Zimengdk or Zimengdk-Illidan)" autocomplete="off">
             </div>
-            <div class="realm-select-group">
-              <i class="bx bx-globe select-icon"></i>
-              <select id="quickRealmSelect" class="realm-select">
+
+            <div class="qs-select-group">
+              <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; vertical-align: middle; color: var(--text-dim);"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+              <select id="quickRealmSelect" class="qs-select">
                 <option value="">All Realms (Auto-Detect)</option>
+                <!-- Populated dynamically from realms.json -->
               </select>
             </div>
-            <button id="btnQuickSearch" class="btn btn-search">
-              <i class="bx bx-check-shield"></i>
-              <span>VERIFY PLAYER</span>
+
+            <button class="btn btn-hero btn-search" id="btnQuickSearch">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              VERIFY PLAYER
             </button>
           </div>
 
-          <!-- Quick Verification Result Card -->
-          <div id="verificationResultCard" class="verification-card" style="display: none;">
+          <!-- Quick Search Result Card -->
+          <div class="verification-card" id="verificationResultCard" style="display: none;">
             <div class="vcard-header">
-              <div class="vcard-player-info">
-                <div class="vcard-avatar" id="vcardClassCrest">W</div>
+              <div class="vcard-identity">
+                <div class="class-crest" id="vcardClassCrest">DK</div>
                 <div>
-                  <div class="vcard-title-row">
-                    <h4 class="vcard-name" id="vcardName">Character</h4>
-                    <span class="vcard-realm" id="vcardRealm">— Realm</span>
-                    <span class="vcard-status-pill verified" id="vcardStatusBadge">
-                      <i class="bx bx-badge-check"></i>
-                      <span id="vcardStatusText">WCL ENRICHED</span>
-                    </span>
+                  <div class="vcard-name-row">
+                    <span class="vcard-name" id="vcardName">Zimengdk</span>
+                    <span class="vcard-realm" id="vcardRealm">— Illidan (US)</span>
                   </div>
-                  <div class="vcard-meta" id="vcardMeta">Protection Warrior • Season 2 Mythic+</div>
+                  <div class="vcard-meta" id="vcardMeta">Blood Death Knight • Level 90</div>
                 </div>
               </div>
-              <div class="vcard-links">
-                <a id="vcardRioLink" href="#" target="_blank" class="btn-brand-action action-rio" title="View on Raider.IO">
-                  <img src="assets/raiderio_logo.png" alt="Raider.IO">
-                  <span>Raider.IO</span>
-                </a>
-                <a id="vcardWclLink" href="#" target="_blank" class="btn-brand-action action-wcl" title="View on Warcraft Logs">
-                  <img src="assets/warcraftlogs_logo.png" alt="WCL">
-                  <span>Warcraft Logs</span>
-                </a>
+              <div class="vcard-status-pill verified" id="vcardStatusBadge">
+                <span class="vcard-status-dot"></span>
+                <span id="vcardStatusText">RECORDED IN DATABASE</span>
               </div>
             </div>
 
-            <div class="vcard-metric-highlight">
-              <div class="metric-score-block">
-                <span class="metric-label" id="vcardMetricLabel">⚡ TANK: SPEED MEDIAN PERF. AVG</span>
-                <div class="metric-value-row">
-                  <span class="metric-huge" id="vcardMedianScore">0.0</span>
-                  <span class="parse-pill pill-legendary" id="vcardParsePill">Legendary</span>
+            <div class="vcard-body">
+              <div class="metric-highlight-box">
+                <div class="metric-label" id="vcardMetricLabel">⚡ TANK: SPEED MEDIAN PERF. AVG</div>
+                <div class="metric-val-row">
+                  <span class="metric-score" id="vcardMedianScore">99.9</span>
+                  <span class="metric-unit">%</span>
+                  <span class="parse-pill pill-legendary" id="vcardParsePill">Legendary 99</span>
                 </div>
-                <p class="metric-explanation" id="vcardMetricExplanation">
-                  Evaluated across Season Dungeons using authentic Warcraft Logs clearance metrics.
-                </p>
+                <div class="metric-explanation" id="vcardMetricExplanation">
+                  Evaluated across all 8 Season Dungeons using authentic Warcraft Logs <strong>Speed</strong> metric.
+                </div>
               </div>
 
-              <div class="vcard-stats-grid">
-                <div class="vcard-stat-box">
-                  <span class="vcard-stat-label">ASSIGNED ROLE</span>
-                  <span class="vcard-stat-val" id="vcardRoleVal">🛡️ Tank</span>
+              <div class="vcard-details-grid">
+                <div class="detail-cell">
+                  <span class="d-label">Detected Role:</span>
+                  <span class="d-val" id="vcardRoleVal">🛡️ Tank</span>
                 </div>
-                <div class="vcard-stat-box">
-                  <span class="vcard-stat-label">DUNGEONS EVALUATED</span>
-                  <span class="vcard-stat-val" id="vcardDungeonsCount">8 / 8 Active</span>
+                <div class="detail-cell">
+                  <span class="d-label">Dungeons Logged:</span>
+                  <span class="d-val" id="vcardDungeonsCount">8 / 8 Active</span>
                 </div>
-                <div class="vcard-stat-box">
-                  <span class="vcard-stat-label">RECORDED RUNS</span>
-                  <span class="vcard-stat-val" id="vcardRunsCount">12 Runs Recorded</span>
+                <div class="detail-cell">
+                  <span class="d-label">Total Runs Recorded:</span>
+                  <span class="d-val" id="vcardRunsCount">134 Kills</span>
                 </div>
-                <div class="vcard-stat-box">
-                  <span class="vcard-stat-label">STORAGE SOURCE</span>
-                  <span class="vcard-stat-val" id="vcardLastSync" style="color: var(--cyan);">Cloudflare R2</span>
+                <div class="detail-cell">
+                  <span class="d-label">Last Database Sync:</span>
+                  <span class="d-val" id="vcardLastSync">12m ago</span>
                 </div>
               </div>
+            </div>
+
+            <div class="vcard-footer">
+              <div class="vcard-links" style="display: flex; gap: 8px;">
+                <a href="#" target="_blank" class="btn-rio" id="vcardRioLink">
+                  <img src="assets/raiderio_logo.png" alt="Raider.IO" class="btn-brand-img" />
+                  View on Raider.IO
+                </a>
+                <a href="#" target="_blank" class="btn-wcl" id="vcardWclLink">
+                  <img src="assets/warcraftlogs_logo.png" alt="Warcraft Logs" class="btn-brand-img" />
+                  View on Warcraft Logs
+                </a>
+              </div>
+              <span class="vcard-tip">PartyFinder Companion &amp; AddOn consume this exact Median parse score.</span>
             </div>
           </div>
         </div>
 
-        <!-- Live Telemetry Deck: Stream + Terminal Logs -->
-        <div class="deck-split-grid">
-          <!-- Discovered Pusher Live Stream -->
-          <div class="card stream-card">
-            <div class="card-header">
-              <div class="card-title-row">
-                <div class="card-icon"><i class="bx bx-broadcast text-cyan"></i></div>
-                <div>
-                  <h3 class="card-title">Real-Time Cloud Feed</h3>
-                  <span class="card-sub">Recently enriched and discovered players</span>
-                </div>
-              </div>
-              <span class="live-counter-badge" id="livePlayerCounter">Connected via Supabase Realtime</span>
+        <!-- Action Deck Controls (Manual Overrides) -->
+        <div class="action-deck card">
+          <div class="deck-mode-selector">
+            <span class="deck-label">MANUAL OVERRIDES:</span>
+            <div class="mode-pills">
+              <button class="mode-pill active" id="modeRaiderIo" data-mode="raiderio">
+                <img src="assets/raiderio_logo.png" class="pill-brand-img" alt="Raider.IO" />
+                Raider.IO Roster Sweep
+              </button>
+              <button class="mode-pill" id="modeWcl" data-mode="wcl">
+                <img src="assets/warcraftlogs_logo.png" class="pill-brand-img" alt="WCL" />
+                WCL Parse Enrichment
+              </button>
             </div>
-            <div class="player-stream-wrap" id="playerStream">
+          </div>
+
+          <div class="deck-buttons">
+            <button class="btn btn-hero btn-start" id="btnStartJob" title="Manually start selected mode">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              RUN NOW
+            </button>
+            <button class="btn btn-warning btn-pause" id="btnPauseJob" disabled title="Temporarily pause or resume the sweep">
+              <svg class="btn-icon" id="iconPauseJob" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              <span id="txtPauseJob">PAUSE</span>
+            </button>
+            <button class="btn btn-danger btn-stop" id="btnStopJob" disabled title="Immediately stop the active sweep or enrichment job">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+              STOP
+            </button>
+            <button class="btn btn-secondary btn-sync" id="btnSyncCloud" title="Directly commit and push database files to Cloudflare">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke-width="2"/></svg>
+              DEPLOY CDN
+            </button>
+          </div>
+        </div>
+
+        <!-- Split Deck: Live Enriched Feed (Left) & Real-Time Terminal (Right) -->
+        <div class="split-view">
+          <!-- Left Feed: Live Enriched Player Cards -->
+          <div class="split-column left-feed card">
+            <div class="column-header">
+              <div class="col-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                LIVE SCRAPED PLAYERS (ROLE-BASED MEDIANS)
+              </div>
+              <span class="badge badge-cyan" id="livePlayerCounter">0 this run</span>
+            </div>
+
+            <div class="player-stream" id="playerStream">
               <div class="stream-empty" id="streamEmptyState">
-                <div class="spinner-dot"></div>
-                <span>Listening for incoming cloud harvester events...</span>
+                <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <div class="empty-text">Harvester Running</div>
+                <div class="empty-sub">Role-authenticated player cards (Speed, Damage, Healing) stream here in real-time.</div>
               </div>
             </div>
           </div>
 
-          <!-- Cloud Harvester Terminal Console -->
-          <div class="card terminal-card">
-            <div class="card-header">
-              <div class="card-title-row">
-                <div class="card-icon"><i class="bx bx-terminal text-emerald"></i></div>
-                <div>
-                  <h3 class="card-title">Cloud Harvester Logs</h3>
-                  <span class="card-sub">Realtime execution telemetry from GitHub Actions runner</span>
-                </div>
+          <!-- Right Feed: Streaming Console Terminal -->
+          <div class="split-column right-terminal card">
+            <div class="column-header">
+              <div class="col-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                REAL-TIME CONSOLE STREAM
               </div>
-              <div class="terminal-actions">
-                <label class="autoscroll-toggle">
-                  <input type="checkbox" id="chkAutoScroll" checked>
-                  <span>Auto-scroll</span>
+              <div class="terminal-controls">
+                <label class="auto-scroll-toggle">
+                  <input type="checkbox" id="chkAutoScroll" checked> Auto-scroll
                 </label>
-                <button class="btn-micro" id="btnCopyLog" title="Copy Terminal Log">
-                  <i class="bx bx-copy"></i>
-                </button>
-                <button class="btn-micro" id="btnClearLog" title="Clear Console">
-                  <i class="bx bx-trash"></i>
-                </button>
+                <button class="btn-micro" id="btnClearLog" title="Clear console output">Clear</button>
+                <button class="btn-micro" id="btnCopyLog" title="Copy all logs to clipboard">Copy</button>
               </div>
             </div>
-            <div class="terminal-viewport" id="terminalBody">
-              <!-- Dynamically populated from Supabase Realtime -->
+
+            <div class="terminal-body" id="terminalBody">
+              <div class="log-line log-info">
+                <span class="log-ts">[00:00:00]</span>
+                <span class="log-tag tag-info">INFO</span>
+                <span class="log-msg">PartyFinder Cloud Studio v2 initialized. Loaded 246 US Realms.</span>
+              </div>
             </div>
           </div>
         </div>
-
       </section>
 
-      <!-- TAB 2: PLAYER DATABASE -->
+      <!-- TAB 2: PLAYER DATABASE & INSPECTOR (Option C) -->
       <section class="tab-pane" id="tab-database">
-        <div class="database-view card">
-          <div class="db-header-bar">
-            <div class="db-title-group">
-              <h3 class="db-title">Cloud Player Registry</h3>
-              <span class="db-counter-badge" id="dbTotalCountBadge">131,723 Players Stored</span>
+        <div class="card database-card">
+          <div class="column-header">
+            <div class="col-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              SCRAPED PLAYER DATABASE EXPLORER
             </div>
-            <div class="db-actions-group">
-              <a id="btnExportJson" href="#" target="_blank" download="rio_players_us.json" class="btn btn-micro btn-export" title="Download Full JSON directly from R2">
-                <i class="bx bx-download"></i>
-                <span>EXPORT FULL JSON (R2)</span>
-              </a>
+            <div class="db-header-actions">
+              <span class="badge badge-emerald" id="dbTotalCountBadge">0 Players Recorded</span>
+              <button class="btn-micro" id="btnExportDb">Export JSON</button>
             </div>
           </div>
 
           <!-- Filter Toolbar -->
-          <div class="db-filter-toolbar">
-            <div class="filter-item filter-search">
-              <i class="bx bx-search"></i>
-              <input type="text" id="dbSearchInput" placeholder="Search character name...">
+          <div class="database-filters">
+            <div class="db-filter-item search-box">
+              <label class="filter-label">Search Character</label>
+              <input type="text" id="dbSearchInput" class="input-text" placeholder="Type character name...">
             </div>
-            <div class="filter-item">
-              <select id="dbRealmFilter">
+
+            <div class="db-filter-item">
+              <label class="filter-label">Realm</label>
+              <select id="dbRealmFilter" class="input-select">
                 <option value="all">All Realms</option>
               </select>
             </div>
-            <div class="filter-item">
-              <select id="dbRoleFilter">
-                <option value="all">All Roles</option>
-                <option value="Tank">🛡️ Tanks</option>
-                <option value="Healer">💚 Healers</option>
-                <option value="DPS">⚔️ DPS</option>
+
+            <div class="db-filter-item">
+              <label class="filter-label">Population Tier</label>
+              <select id="dbTierFilter" class="input-select">
+                <option value="all">All Tiers (P1 + P2 + P3)</option>
+                <option value="1">👑 Priority 1 (Mega Realms)</option>
+                <option value="2">🔷 Priority 2 (Middle Realms)</option>
+                <option value="3">◽ Priority 3 (Low Realms)</option>
               </select>
             </div>
-            <div class="filter-item">
-              <select id="dbClassFilter">
+
+            <div class="db-filter-item">
+              <label class="filter-label">Role</label>
+              <select id="dbRoleFilter" class="input-select">
+                <option value="all">All Roles</option>
+                <option value="Tank">🛡️ Tanks (Speed Metric)</option>
+                <option value="DPS">⚔️ DPS (Damage Metric)</option>
+                <option value="Healer">💚 Healers (Healing Metric)</option>
+              </select>
+            </div>
+
+            <div class="db-filter-item">
+              <label class="filter-label">Class</label>
+              <select id="dbClassFilter" class="input-select">
                 <option value="all">All Classes</option>
                 <option value="Death Knight">Death Knight</option>
                 <option value="Demon Hunter">Demon Hunter</option>
@@ -395,49 +442,58 @@
                 <option value="Warrior">Warrior</option>
               </select>
             </div>
-            <div class="filter-item">
-              <select id="dbStatusFilter">
-                <option value="all">All Status</option>
-                <option value="enriched">WCL Enriched Only</option>
-                <option value="unlogged">Unlogged Pusher</option>
-                <option value="discovered">Pending Queue</option>
+
+            <div class="db-filter-item">
+              <label class="filter-label">Min Median Parse</label>
+              <select id="dbParseFilter" class="input-select">
+                <option value="0">All Parses (0%+)</option>
+                <option value="50">50%+ (Rare+)</option>
+                <option value="75">75%+ (Epic+)</option>
+                <option value="90">90%+ (Top Tier)</option>
+                <option value="95">95%+ (Legendary)</option>
+                <option value="99">99%+ (Rank 1)</option>
+              </select>
+            </div>
+
+            <div class="db-filter-item">
+              <label class="filter-label">Harvest Status</label>
+              <select id="dbStatusFilter" class="input-select">
+                <option value="all">All Statuses</option>
+                <option value="enriched">⚡ Enriched Only</option>
+                <option value="unlogged">◽ Unlogged Only</option>
+                <option value="discovered">⏳ Queued / Discovered</option>
               </select>
             </div>
           </div>
 
-          <!-- Table Container -->
-          <div class="db-table-responsive">
-            <table class="db-table">
+          <!-- Table View -->
+          <div class="database-table-wrapper">
+            <table class="db-table" id="dbPlayerTable">
               <thead>
                 <tr>
                   <th>Character</th>
-                  <th>Realm / Tier</th>
-                  <th>Spec / Class</th>
+                  <th>Realm</th>
+                  <th>Class &amp; Spec</th>
                   <th>Role</th>
-                  <th>Raider.IO</th>
-                  <th>WCL Parse</th>
+                  <th>Raider.IO Score</th>
+                  <th>WCL Parse / Median</th>
                   <th>Status</th>
-                  <th>Profiles</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody id="dbTableBody">
-                <tr>
-                  <td colspan="8" style="text-align: center; color: var(--text-dim); padding: 40px;">
-                    <div class="spinner-dot" style="margin: 0 auto 10px;"></div>
-                    Connecting to Cloudflare R2 storage...
-                  </td>
-                </tr>
+                <!-- Dynamically populated -->
               </tbody>
             </table>
           </div>
 
-          <!-- Pagination Bar -->
-          <div class="db-pagination-bar">
-            <div class="pagination-info" id="dbPageInfo">Loading pages...</div>
-            <div class="pagination-controls">
-              <button class="btn-page" id="btnDbPrevPage" disabled>Previous</button>
-              <span class="current-page-num" id="dbCurrentPageNum">Page 1 of 2635</span>
-              <button class="btn-page" id="btnDbNextPage">Next</button>
+          <!-- Table Pagination / Summary Footer -->
+          <div class="db-table-footer">
+            <span class="db-page-info" id="dbPageInfo">Showing 1 to 25 of 68,419 entries</span>
+            <div class="db-pagination-btns">
+              <button class="btn-micro" id="btnDbPrevPage" disabled>Previous</button>
+              <span class="page-num-display" id="dbCurrentPageNum">Page 1</span>
+              <button class="btn-micro" id="btnDbNextPage">Next</button>
             </div>
           </div>
         </div>
@@ -445,43 +501,105 @@
 
       <!-- TAB 3: ANALYTICS -->
       <section class="tab-pane" id="tab-analytics">
-        <div class="analytics-view card">
-          <div class="analytics-header">
-            <div>
-              <h3 class="card-title">Regional Population &amp; Harvester Census</h3>
-              <p class="card-sub">Data-driven population distribution and enrichment coverage</p>
-            </div>
-            <button class="btn-micro" id="btnRefreshAnalytics">
-              <i class="bx bx-refresh"></i>
-              <span>Refresh Matrix</span>
-            </button>
+        <div class="card analytics-card">
+          <div class="column-header">
+            <div class="col-title">STRATEGY 1 REALM COVERAGE BY REGION</div>
+            <button class="btn-micro" id="btnRefreshAnalytics">Refresh</button>
           </div>
+          <div class="regions-grid" id="regionsGrid">
+            <!-- Dynamically populated from realms.json -->
+          </div>
+        </div>
 
-          <!-- Regional Population Matrix Table -->
-          <div class="matrix-table-wrap">
-            <table class="matrix-table">
+        <div class="card analytics-card" style="margin-top: 16px;">
+          <div class="column-header">
+            <div class="col-title">ROLE METRIC HARVESTING PIPELINE ARCHITECTURE</div>
+          </div>
+          <div class="pipeline-diagram">
+            <div class="diagram-step">
+              <div class="step-num">1</div>
+              <div class="step-title">1. Raider.IO Discovery</div>
+              <div class="step-desc">Harvests 100% authentic active player rosters &amp; M+ IO scores via open REST API with zero rate caps.</div>
+            </div>
+            <div class="diagram-arrow">➔</div>
+            <div class="diagram-step">
+              <div class="step-num">2</div>
+              <div class="step-title">2. Score Prioritization</div>
+              <div class="step-desc">Deduplicates characters and sorts the entire regional pool by Raider.IO score descending.</div>
+            </div>
+            <div class="diagram-arrow">➔</div>
+            <div class="diagram-step">
+              <div class="step-num">3</div>
+              <div class="step-title">3. WCL Combat Enrichment</div>
+              <div class="step-desc">Spends 100% of WCL budget querying authentic combat parses (Speed, DPS, HPS) for top-tier pushers.</div>
+            </div>
+            <div class="diagram-arrow">➔</div>
+            <div class="diagram-step">
+              <div class="step-num">4</div>
+              <div class="step-title">4. Cloudflare CDN Push</div>
+              <div class="step-desc">Deploys unified database directly to https://imongmama.online for AddOn &amp; Companion sync.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- REGIONAL TELEMETRY MATRIX CARD -->
+        <div class="card analytics-card" style="margin-top: 16px;">
+          <div class="column-header">
+            <div class="col-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; margin-right: 6px; display: inline-block; vertical-align: -2px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+              REGIONAL CENSUS &amp; HARVEST TELEMETRY MATRIX
+            </div>
+            <span class="badge badge-soft-info" id="telemetryLastSync">Live Registry Telemetry</span>
+          </div>
+          <div class="database-table-wrapper" style="margin-top: 10px;">
+            <table class="db-table analytics-matrix-table">
               <thead>
                 <tr>
                   <th>Region &amp; Jurisdictions</th>
-                  <th>Realms Monitored</th>
-                  <th>Census Population</th>
-                  <th>Raider.IO Harvested</th>
-                  <th>WCL Enriched</th>
-                  <th>Engine Status</th>
+                  <th>Realm Topology</th>
+                  <th>Official Raider.IO Pool</th>
+                  <th>Raider.IO Discovery</th>
+                  <th>WCL Combat Enrichment</th>
+                  <th>Harvest Status</th>
                 </tr>
               </thead>
               <tbody id="analyticsMatrixBody">
-                <!-- Dynamically rendered from realms.json -->
+                <!-- Dynamically populated from real data -->
               </tbody>
-              <tfoot id="analyticsMatrixFoot"></tfoot>
+              <tfoot id="analyticsMatrixFoot">
+                <!-- Dynamic Totals Summary -->
+              </tfoot>
             </table>
           </div>
+        </div>
 
-          <!-- Role Metrics Breakdown -->
-          <div class="role-metrics-section">
-            <h4 class="section-title">Role Distribution KPI Summary</h4>
+        <!-- ROLE METRIC & WCL QUOTA TELEMETRY -->
+        <div class="analytics-split-row" style="margin-top: 16px; display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px;">
+          <!-- Role Metric Breakdown -->
+          <div class="card analytics-card">
+            <div class="column-header">
+              <div class="col-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; margin-right: 6px; display: inline-block; vertical-align: -2px;"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+                ACTIVE REGION ROLE METRIC DISTRIBUTION
+              </div>
+              <span class="badge badge-soft-info" id="roleRegionBadge">US Region</span>
+            </div>
             <div class="role-metric-cards-grid" id="roleMetricCardsGrid">
-              <!-- Rendered via JS -->
+              <!-- Dynamically populated from playerDatabase -->
+            </div>
+          </div>
+
+          <!-- Pipeline Infrastructure & Edge CDN Status -->
+          <div class="card analytics-card">
+            <div class="column-header">
+              <div class="col-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; margin-right: 6px; display: inline-block; vertical-align: -2px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                PIPELINE QUOTA &amp; EDGE SYNC
+              </div>
+              <span class="badge badge-emerald">Edge Connected</span>
+            </div>
+            <div class="pipeline-status-details" id="pipelineStatusDetails">
+              <!-- Dynamically populated from status -->
             </div>
           </div>
         </div>
@@ -489,38 +607,158 @@
 
       <!-- TAB 4: SETTINGS -->
       <section class="tab-pane" id="tab-settings">
-        <div class="settings-view">
-          <div class="card settings-card">
-            <h3 class="card-title">Cloud Infrastructure Configuration</h3>
-            <p class="card-sub">Manage R2 storage endpoints and Supabase connectivity</p>
-
-            <div class="settings-form">
-              <div class="form-group">
-                <label class="form-label">Cloudflare R2 Public Base URL</label>
-                <input type="text" id="cfgR2Url" class="login-input" placeholder="https://r2.imongmama.online" value="https://r2.imongmama.online">
-                <span class="field-hint">Public Custom Domain or R2.dev URL connected to your <code>partyfinder-data</code> bucket</span>
+        <div class="card settings-card">
+          <div class="column-header">
+            <div class="col-title">CONFIGURATION &amp; HARVESTER TUNABLES</div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div class="vault-indicator" id="vaultStatusBadge">
+                <span class="pulse-dot"></span>
+                <span id="vaultStatusText">Supabase Vault: Syncing...</span>
               </div>
+              <button class="btn btn-hero btn-save" id="btnSaveSettings">SAVE SETTINGS</button>
+            </div>
+          </div>
 
-              <div class="form-group">
-                <label class="form-label">Supabase URL</label>
-                <input type="text" class="login-input" value="https://anvkqwbqgqcopsuhhene.supabase.co" readonly style="opacity: 0.7;">
-                <span class="field-hint">Stores operational state and telemetry (< 1MB)</span>
+          <div class="settings-grid">
+            <!-- WCL Client ID -->
+            <div class="setting-group">
+              <label class="setting-label">Warcraft Logs Client ID</label>
+              <div class="input-with-action">
+                <input type="text" class="input-text" id="cfgWclClientId" placeholder="01a06b51-55d4-...">
+                <button class="btn btn-rose" id="btnDeleteWclId" title="Delete WCL Client ID from Supabase vault">Delete</button>
               </div>
+            </div>
 
-              <div class="form-group">
-                <label class="form-label">GitHub Repository</label>
-                <div class="repo-badge-row">
-                  <a href="https://github.com/chupapimelon/partyfinder-harvester-cloud" target="_blank" class="repo-link">
-                    <i class="bx bxl-github"></i>
-                    <span>chupapimelon/partyfinder-harvester-cloud</span>
-                  </a>
-                  <span class="badge badge-emerald">Cron Active (Every 5m)</span>
+            <!-- WCL Client Secret -->
+            <div class="setting-group">
+              <label class="setting-label">Warcraft Logs Client Secret</label>
+              <div class="input-with-action">
+                <input type="password" class="input-text" id="cfgWclClientSecret" placeholder="••••••••••••••••••••••••••••••••">
+                <button class="btn btn-secondary" id="btnToggleSecret">Show</button>
+                <button class="btn btn-cyan" id="btnTestWcl">Test WCL</button>
+                <button class="btn btn-rose" id="btnDeleteWcl" title="Delete WCL credentials from Supabase vault">Delete</button>
+              </div>
+              <span class="setting-hint" id="wclTestFeedback">Used for official GraphQL API queries (3,600 pts/hr budget).</span>
+            </div>
+
+            <!-- WCL Auto-Pilot Dynamic Scaling Strategy -->
+            <div class="setting-group">
+              <label class="setting-label">WCL Auto-Pilot Pace Strategy</label>
+              <select class="input-select" id="cfgWclPaceMode" style="width: 100%; background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-main); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                <option value="auto" selected>🟢 Dynamic Auto-Scale (Free: 10/min • Gold: 25/min • Platinum: 50/min)</option>
+                <option value="turbo">⚡ Turbo Sprint (Continuous high-speed batches)</option>
+                <option value="conservative">🛡️ Conservative Drip (5 players / min)</option>
+                <option value="max">👑 Max Capacity Force (50 players / min)</option>
+              </select>
+              <span class="setting-hint" id="wclPaceHint">Automatically detects your Patreon subscription tier from Warcraft Logs API.</span>
+            </div>
+
+            <!-- GitHub Deployment Token -->
+            <div class="setting-group">
+              <label class="setting-label">GitHub Deployment Token (PAT)</label>
+              <div class="input-with-action">
+                <input type="password" class="input-text" id="cfgGithubToken" placeholder="ghp_••••••••••••••••••••••••••••••••">
+                <button class="btn btn-secondary" id="btnToggleGithubToken">Show</button>
+                <button class="btn btn-cyan" id="btnTestGithub">Test GitHub</button>
+                <button class="btn btn-rose" id="btnDeleteGithub" title="Delete GitHub token from Supabase vault">Delete</button>
+              </div>
+              <span class="setting-hint" id="githubTestFeedback">Pushes database to github.com/chupapimelon/imong-mama-ui to trigger Cloudflare CDN.</span>
+            </div>
+
+            <!-- Target Deployment Repo -->
+            <div class="setting-group">
+              <label class="setting-label">Target GitHub Repository</label>
+              <input type="text" class="input-text" id="cfgTargetRepo" value="chupapimelon/imong-mama-ui" readonly style="opacity: 0.85; font-family: var(--font-mono); font-size: 12px;">
+              <span class="setting-hint">Connected directly to Cloudflare Pages (https://imongmama.online)</span>
+            </div>
+
+            <!-- Priority Crawl Strategy Selection -->
+            <div class="setting-group full-width">
+              <div class="setting-header-with-badge">
+                <label class="setting-label">Population Priority Crawl Strategy</label>
+                <span class="setting-badge-source">Data-Driven by WoWMeta (Patch 12.1.0)</span>
+              </div>
+              <div class="priority-strategy-cards">
+                <label class="strategy-card">
+                  <input type="radio" name="crawlStrategy" value="priority_all" checked>
+                  <div class="strat-content">
+                    <div class="strat-title">
+                      <span class="strat-badge badge-p1">👑 Priority 1 First</span>
+                      <strong>Cascading Priority Crawl (Recommended)</strong>
+                    </div>
+                    <div class="strat-desc">Crawls Priority 1 Mega realms first, then Priority 2 Middle, then Priority 3 Low. Maximizes early coverage under the 3,600 pts/hr limit.</div>
+                  </div>
+                </label>
+
+                <label class="strategy-card">
+                  <input type="radio" name="crawlStrategy" value="priority_mega">
+                  <div class="strat-content">
+                    <div class="strat-title">
+                      <span class="strat-badge badge-turbo">⚡ Turbo Focus</span>
+                      <strong>Priority 1 Mega Realms Only</strong>
+                    </div>
+                    <div class="strat-desc">Directs 100% of WCL hourly points exclusively to the top Mega Realms (capturing ~70-87% of the entire region's M+ player pool with zero wasted quota).</div>
+                  </div>
+                </label>
+
+                <label class="strategy-card">
+                  <input type="radio" name="crawlStrategy" value="priority_core">
+                  <div class="strat-content">
+                    <div class="strat-title">
+                      <span class="strat-badge badge-core">🔷 Core Focus</span>
+                      <strong>Priority 1 &amp; Priority 2 (Mega + Mid)</strong>
+                    </div>
+                    <div class="strat-desc">Covers the top Mega and Middle realms (~86-88% of player base), bypassing abandoned low-population servers.</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Active Target Region -->
+            <div class="setting-group">
+              <label class="setting-label">Primary Target Region</label>
+              <select class="input-select" id="cfgPrimaryRegion">
+                <option value="US" selected>Americas &amp; Oceania (US - 247 Realms • 494,116 M+)</option>
+                <option value="EU">Europe (EU - 268 Realms • 677,100 M+)</option>
+                <option value="KR">Korea (KR - 18 Realms • 55,600 M+)</option>
+                <option value="TW">Taiwan &amp; Global (TW - 27 Realms • 24,500 M+)</option>
+              </select>
+            </div>
+
+            <!-- Rate Limit Delay -->
+            <div class="setting-group">
+              <label class="setting-label">WCL Hourly Points Budget Safety Margin</label>
+              <input type="number" class="input-text" id="cfgSafetyMargin" min="50" max="500" value="100">
+              <span class="setting-hint">Leaves buffer points so you never hit the hard 3,600 rate limit ceiling.</span>
+            </div>
+
+            <!-- Studio Access Passcode -->
+            <div class="setting-group full-width scheduler-box" style="margin-top: 4px;">
+              <div class="scheduler-header">
+                <div>
+                  <div class="scheduler-title">Studio Master Passcode</div>
+                  <div class="scheduler-desc">Lock passcode used for quick access without logging into Supabase. (Default: <code>partyfinder</code>)</div>
+                </div>
+                <div class="input-with-action" style="max-width: 340px;">
+                  <input type="password" class="input-text" id="cfgMasterPasscode" placeholder="partyfinder">
+                  <button class="btn btn-secondary" id="btnToggleMasterPasscode">Show</button>
+                  <button class="btn btn-rose" id="btnDeleteMasterPasscode" title="Reset Master Passcode in Supabase vault">Reset</button>
                 </div>
               </div>
+            </div>
 
-              <button class="btn btn-hero" id="btnSaveCloudSettings" style="max-width: 250px;">
-                <span>SAVE SETTINGS</span>
-              </button>
+            <!-- 24/7 Autonomous Toggle -->
+            <div class="setting-group full-width scheduler-box">
+              <div class="scheduler-header">
+                <div>
+                  <div class="scheduler-title">24/7 Autonomous Cloud Running Mode</div>
+                  <div class="scheduler-desc">Automatically executes crawls and metric enrichment around the clock without manual intervention.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfgAutoPilotEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -528,14 +766,26 @@
 
     </main>
 
-    <!-- Global Footer Bar -->
+    <!-- Bottom Status Bar -->
     <footer class="studio-footer">
       <div class="footer-left">
-        <span class="status-indicator-dot online"></span>
-        <span id="footerEngineStatus">PartyFinder Cloud Harvester • Autonomous GitHub Actions Engine</span>
+        <span class="status-indicator running" id="footerIndicator"></span>
+        <span class="footer-status-text" id="footerStatusText">HARVESTER v2 ACTIVE</span>
+        <span class="footer-divider">|</span>
+        <span class="footer-sub" id="footerSubText">Deep Realm Scraper active. Role Metrics: Tank=Speed, DPS=Damage, Healer=HPS.</span>
       </div>
       <div class="footer-right">
-        <span id="footerMetaDate">Database: 131,723 Players Stored in R2</span>
+        <div class="status-pill status-cdn" title="Cloudflare Pages Production Endpoint">
+          <span class="pulse-dot"></span>
+          <span class="pill-label">CDN:</span>
+          <span class="pill-val">imongmama.online</span>
+        </div>
+        <div class="status-pill status-rate" id="wclRatePill" title="Hourly Warcraft Logs API Budget (3,600 pts/hr)">
+          <svg class="pill-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span class="pill-label">WCL Quota:</span>
+          <span class="pill-val" id="wclQuotaText">3,600 / 3,600 pts</span>
+        </div>
+        <span class="footer-meta" id="footerMetaDate">Database: 0 Players Recorded</span>
       </div>
     </footer>
   </div>
@@ -547,7 +797,7 @@
         <div class="login-crest-wrap">
           <img src="assets/icon.png" class="login-crest" alt="PartyFinder Crest">
         </div>
-        <div class="login-title">PARTYFINDER <span class="brand-tag">CLOUD STUDIO</span></div>
+        <div class="login-title">PARTYFINDER <span class="brand-tag">STUDIO v2</span></div>
         <div class="login-sub">Strategy 1 Deep Harvester &amp; Cloud Vault Access</div>
       </div>
 
@@ -562,7 +812,7 @@
             <input type="password" id="loginMasterPasscode" class="login-input" placeholder="Enter Master Passcode..." autocomplete="current-password" autofocus style="padding-right: 65px;">
             <button type="button" class="btn-micro" id="btnToggleLoginPasscode" style="position: absolute; right: 8px;">Show</button>
           </div>
-          <span class="field-hint">Validated against Supabase vault (Default: <code>partyfinder</code>)</span>
+          <span class="field-hint">Synchronized with your Supabase vault (Default: <code>partyfinder</code>)</span>
         </div>
 
         <div class="form-options">
@@ -588,6 +838,6 @@
   <!-- Supabase JS Client via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Cloud Frontend Controller -->
-  <script src="app_cloud.js?v=cloud_v1"></script>
+  <script src="app_cloud.js?v=cloud_v10"></script>
 </body>
 </html>
