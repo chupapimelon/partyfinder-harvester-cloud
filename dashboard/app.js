@@ -127,10 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const reg = (currentActiveRegion || 'US').toLowerCase();
       let res;
-      try {
-        res = await fetch(`/api/harvest/players?region=${reg}&limit=100000`);
-      } catch (e) {}
-      if ((!res || !res.ok) && IS_CLOUD) {
+      if (IS_CLOUD) {
         try {
           res = await fetch('/data/rio_players_us.json');
         } catch (e) {}
@@ -139,6 +136,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             res = await fetch(`${R2_BASE}/data/rio_players_us.json`);
           } catch (e) {}
         }
+      }
+      if (!res || !res.ok) {
+        try {
+          res = await fetch(`/api/harvest/players?region=${reg}&limit=100000`);
+        } catch (e) {}
       }
       if (res && res.ok) {
         const data = await res.json();
@@ -1081,50 +1083,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  
-  let searchDebounce = null;
-  if (dbSearchInput && IS_CLOUD) {
-    dbSearchInput.addEventListener('input', () => {
-      clearTimeout(searchDebounce);
-      searchDebounce = setTimeout(async () => {
-        const q = dbSearchInput.value.trim();
-        if (q.length >= 1) {
-          const char = q[0].toLowerCase();
-          try {
-            const res = await fetch(`${R2_BASE}/api/us/search_${char}.json`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data && Array.isArray(data.players)) {
-                playerDatabase = data.players.filter(p => p.name.toLowerCase().includes(q.toLowerCase())).map(p => ({
-                  name: p.name,
-                  realm: p.realm,
-                  realmSlug: p.realmSlug || p.realm.toLowerCase().replace(/['\s]/g, ''),
-                  region: 'US',
-                  class: p.class,
-                  spec: p.spec,
-                  role: p.role,
-                  rioScore: p.rioScore || 0,
-                  median: p.medianParse || 0,
-                  metric: p.role === 'Tank' ? 'Speed' : (p.role === 'Healer' ? 'HPS' : 'DPS'),
-                  dungeons: 8,
-                  runs: 1,
-                  enriched: !!p.enriched,
-                  unlogged: !!p.unlogged,
-                  lastSync: 'Discovered'
-                }));
-                currentPage = 1;
-                renderDatabaseTable();
-              }
-            }
-          } catch(e) {}
-        } else if (q.length === 0) {
-          await loadCloudPage(1);
-          currentPage = 1;
-          renderDatabaseTable();
-        }
-      }, 300);
-    });
-  }
 
   function applyParsePill(pillElement, score) {
     pillElement.className = 'parse-pill';

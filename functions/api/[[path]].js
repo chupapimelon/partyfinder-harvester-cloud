@@ -18,8 +18,11 @@ export async function onRequest(context) {
   if (targetPath.startsWith('/api/harvest/status')) {
     targetPath = '/api/status.json';
   } else if (targetPath.startsWith('/api/harvest/players')) {
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const search = url.searchParams.get('search');
-    if (search && search.length > 0) {
+    if (limit >= 1000 || url.searchParams.get('all') === 'true') {
+      targetPath = '/data/rio_players_us.json';
+    } else if (search && search.length > 0) {
       const char = search[0].toLowerCase();
       targetPath = `/api/us/search_${char}.json`;
     } else {
