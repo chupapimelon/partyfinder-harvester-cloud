@@ -27,6 +27,11 @@ VALUES
     ('wcl_rate_limit', '{"pointsRemaining": 3600, "limitPerHour": 3600}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
+-- Enable RLS and allow public read (anon key can read state and receive Realtime updates)
+ALTER TABLE harvester_state ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public read" ON harvester_state;
+CREATE POLICY "Allow public read" ON harvester_state FOR SELECT USING (true);
+
 -- Enable Realtime for instant sync to dashboard & desktop monitor
 ALTER PUBLICATION supabase_realtime ADD TABLE harvester_state;
 
