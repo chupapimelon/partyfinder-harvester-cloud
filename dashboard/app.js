@@ -1497,8 +1497,64 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       const reg = (currentActiveRegion || 'US').toLowerCase();
-      const statRes = await fetch(`/api/harvest/status?region=${reg}`);
-      if (!statRes.ok) throw new Error(`Status query failed (${statRes.status})`);
+
+      if (IS_CLOUD) {
+        updatePaceBadge();
+        const batchSize = getOptimalBatchSize();
+        const tierName = batchSize >= 50 ? 'Platinum (18k)' : (batchSize >= 25 ? 'Gold (9k)' : 'Standard (3.6k)');
+        appendLog('info', `[24/7 Cloud Auto-Pilot] Dispatching autonomous GitHub Actions harvester run (WCL ${tierName} pace)...`);
+
+        try {
+          const tokenRes = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.github_token&select=value`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+          });
+          const tokenData = await tokenRes.json();
+          const ghToken = tokenData && tokenData[0] ? tokenData[0].value : null;
+
+          if (ghToken) {
+            const dispatchRes = await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${ghToken}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'PartyFinder-Harvester-Cloud'
+              },
+              body: JSON.stringify({ ref: 'main' })
+            });
+
+            if (dispatchRes.status === 204 || dispatchRes.ok) {
+              appendLog('success', `⚡ [24/7 Cloud Auto-Pilot] GitHub Actions runner triggered. Crawling Raider.IO & enriching WCL...`);
+            } else {
+              appendLog('warn', `[24/7 Cloud Auto-Pilot] GitHub dispatch status: ${dispatchRes.status}`);
+            }
+          }
+        } catch (dispatchErr) {
+          appendLog('warn', `[24/7 Cloud Auto-Pilot] Dispatch notice: ${dispatchErr.message}`);
+        }
+
+        // Refresh stats from R2
+        await fetchHarvestStatus();
+
+        // Stream player activity to the HUD
+        if (playerDatabase.length > 0) {
+          const sample = playerDatabase.slice(0, 2);
+          sample.forEach(p => streamDiscoveredPlayerCard(p));
+          liveEnrichedCounter += sample.length;
+          if (livePlayerCounter) {
+            livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+          }
+        }
+        return;
+      }
+
+      let statRes;
+      try {
+        statRes = await fetch(`/api/harvest/status?region=${reg}`);
+      } catch(e){}
+      if (!statRes || !statRes.ok) {
+        await fetchHarvestStatus();
+        return;
+      }
       
       const sData = await statRes.json();
       const pending = sData.pendingEnrichment ?? sData.stats?.pendingEnrichment ?? 0;
@@ -1898,7 +1954,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const filename = `partyfinder_${reg}_database.json`;
       appendLog('info', `Exporting ${playerDatabase.length.toLocaleString()} players as ${filename}...`);
       const a = document.createElement('a');
-      a.href = `/api/harvest/export?region=${reg}`;
+      a.href = IS_CLOUD ? `${R2_BASE}/data/rio_players_us.json` : `/api/harvest/export?region=${reg}`;
       a.download = filename;
       a.style.display = 'none';
       document.body.appendChild(a);
