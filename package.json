@@ -1,0 +1,17 @@
+{
+  "name": "partyfinder-harvester-cloud",
+  "version": "1.0.0",
+  "description": "PartyFinder 24/7 Cloud Harvester — GitHub Actions + Cloudflare R2 + Supabase",
+  "private": false,
+  "type": "commonjs",
+  "scripts": {
+    "harvest": "node src/harvest_tick.js",
+    "deploy": "node src/deploy_cdn.js",
+    "migrate": "node src/migrate_to_r2.js",
+    "generate-pages": "node src/page_generator.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
