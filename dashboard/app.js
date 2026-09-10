@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const role = p.role || (p.spec === 'Blood' || p.spec === 'Protection' || p.spec === 'Guardian' || p.spec === 'Brewmaster' || p.spec === 'Vengeance' ? 'Tank' : (p.spec === 'Restoration' || p.spec === 'Holy' || p.spec === 'Mistweaver' || p.spec === 'Preservation' || p.spec === 'Discipline' ? 'Healer' : 'DPS'));
             const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
             const wcl = p.wcl || {};
-            const median = p.wclMedian || wcl.medianParse || p.wclScore || 0;
+            const median = p.wclMedian || wcl.medianParse || p.medianParse || p.wclScore || 0;
             const isUnlogged = p.unlogged !== undefined ? p.unlogged : !!wcl.unlogged;
             return {
               name: p.name,
@@ -382,8 +382,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadRealms() {
     try {
-      const res = await fetch('../config/realms.json?t=' + Date.now());
-      if (!res.ok) throw new Error('Cannot fetch realms.json');
+      let res;
+      try { res = await fetch('realms.json?t=' + Date.now()); } catch(e){}
+      if (!res || !res.ok) {
+        try { res = await fetch('/realms.json?t=' + Date.now()); } catch(e){}
+      }
+      if (!res || !res.ok) {
+        try { res = await fetch('../config/realms.json?t=' + Date.now()); } catch(e){}
+      }
+      if (!res || !res.ok && IS_CLOUD) {
+        try { res = await fetch(`${R2_BASE}/realms.json?t=` + Date.now()); } catch(e){}
+      }
+      if (!res || !res.ok) throw new Error('Cannot fetch realms.json');
       rawRealmsData = await res.json();
 
       if (cfgPrimaryRegion) {
