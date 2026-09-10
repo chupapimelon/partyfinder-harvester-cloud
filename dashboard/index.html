@@ -65,16 +65,16 @@
       <!-- TAB 1: CONTROL DECK -->
       <section class="tab-pane active" id="tab-deck">
 
-        <!-- 24/7 AUTONOMOUS CLOUD ENGINE HERO BANNER -->
+        <!-- 24/7 AUTONOMOUS AUTO-PILOT HERO BANNER -->
         <div class="autopilot-banner card" id="autoPilotBanner">
           <div class="banner-left">
-            <div class="autopilot-status-badge active" id="autoPilotBadge">
-              <span class="pulse-dot"></span>
-              <span id="autoPilotBadgeText">CLOUD ENGINE: ACTIVE (5-MIN CRON)</span>
+            <div class="autopilot-status-badge" id="autoPilotBadge">
+              <span class="pulse-dot" style="background: #94a3b8; box-shadow: none;"></span>
+              <span id="autoPilotBadgeText">HARVESTER: STANDBY (PAUSED)</span>
             </div>
             <div class="autopilot-phase-info">
-              <div class="phase-title" id="autoPilotPhaseTitle">AUTONOMOUS HYBRID ENGINE: RAIDER.IO &amp; WCL PARSER</div>
-              <div class="phase-detail" id="autoPilotPhaseDetail">Running 24/7 on GitHub Actions • Data persisted to Cloudflare R2 • Realtime Supabase Sync</div>
+              <div class="phase-title" id="autoPilotPhaseTitle">HYBRID ENGINE: RAIDER.IO DISCOVERY &amp; WCL COMBAT ENRICHMENT</div>
+              <div class="phase-detail" id="autoPilotPhaseDetail">Standby: Ready to crawl authentic Raider.IO leaderboards (494k US • 677k EU • 55k KR • 24k TW) on command.</div>
               <div class="priority-tier-pills" id="autoPilotTierPills">
                 <span class="tier-pill pill-p1" id="pillP1Count"><img src="assets/raiderio_logo.png" class="tier-brand-img" alt="Raider.IO"> Raider.IO Ready</span>
                 <span class="tier-pill pill-p2" id="pillP2Count"><img src="assets/warcraftlogs_logo.png" class="tier-brand-img" alt="WCL"> WCL Parser Ready</span>
@@ -84,21 +84,24 @@
           </div>
 
           <div class="banner-right">
-            <div class="cycle-counter pace-counter" id="autoPilotPaceBox" title="Dynamic pace per GitHub Actions Tick">
+            <div class="cycle-counter pace-counter" id="autoPilotPaceBox" title="Dynamic tier pace based on your WCL Patreon limit">
               <span class="cycle-label">ENRICH PACE</span>
-              <span class="cycle-num pace-num" id="autoPilotPaceDisplay" style="color: var(--cyan); font-size: 13px; font-weight: 700;">10 / TICK</span>
+              <span class="cycle-num pace-num" id="autoPilotPaceDisplay" style="color: var(--cyan); font-size: 13px; font-weight: 700;">10 / MIN</span>
             </div>
             <div class="cycle-counter timer-counter" id="autoPilotTimerBox">
-              <span class="cycle-label" id="autoPilotTimerLabel">CRON SCHEDULE</span>
-              <span class="cycle-num timer-num" id="autoPilotTimerCount" style="color: #10b981;">5 MIN</span>
+              <span class="cycle-label" id="autoPilotTimerLabel">AUTO-PILOT STATUS</span>
+              <span class="cycle-num timer-num" id="autoPilotTimerCount" style="color: #94a3b8;">PAUSED</span>
             </div>
             <div class="cycle-counter">
               <span class="cycle-label">ACTIVE ENGINE</span>
               <span class="cycle-num" id="autoPilotRealmCount">RIO + WCL</span>
             </div>
-            <a href="https://github.com/chupapimelon/partyfinder-harvester-cloud/actions" target="_blank" class="btn btn-autopilot" id="btnToggleAutoPilot" style="text-decoration: none;">
-              <span id="btnAutoPilotText">⚡ VIEW WORKFLOWS</span>
-            </a>
+            <button class="btn btn-autopilot" id="btnToggleAutoPilot">
+              <span id="btnAutoPilotText">▶ START HARVESTER</span>
+            </button>
+            <button class="btn btn-autopilot-stop" id="btnStopAutoPilot" style="display: none;">
+              <span>■ STOP</span>
+            </button>
           </div>
         </div>
 
@@ -835,9 +838,6 @@
     </div>
   </div>
 
-  <!-- Supabase JS Client via CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Cloud Frontend Controller -->
-  <script src="app_cloud.js?v=cloud_v10"></script>
+  <script src="app.js?v=cloud_20260911_v12"></script>
 </body>
 </html>
