@@ -132,14 +132,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (e) {}
       if ((!res || !res.ok) && IS_CLOUD) {
         try {
-          res = await fetch(`${R2_BASE}/api/us/page_0001.json`);
+          res = await fetch('/data/rio_players_us.json');
         } catch (e) {}
+        if (!res || !res.ok) {
+          try {
+            res = await fetch(`${R2_BASE}/data/rio_players_us.json`);
+          } catch (e) {}
+        }
       }
       if (res && res.ok) {
         const data = await res.json();
-        const rawPlayers = data.players || [];
-        if (Array.isArray(rawPlayers)) {
-          playerDatabase = data.players.map(p => {
+        let rawPlayers = [];
+        if (Array.isArray(data.players)) {
+          rawPlayers = data.players;
+        } else if (data.players && typeof data.players === 'object') {
+          rawPlayers = Object.values(data.players);
+        }
+
+        if (Array.isArray(rawPlayers) && rawPlayers.length > 0) {
+          // Sort by highest Raider.IO score first
+          rawPlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+
+          playerDatabase = rawPlayers.map(p => {
             const role = p.role || (p.spec === 'Blood' || p.spec === 'Protection' || p.spec === 'Guardian' || p.spec === 'Brewmaster' || p.spec === 'Vengeance' ? 'Tank' : (p.spec === 'Restoration' || p.spec === 'Holy' || p.spec === 'Mistweaver' || p.spec === 'Preservation' || p.spec === 'Discipline' ? 'Healer' : 'DPS'));
             const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
             const wcl = p.wcl || {};
@@ -157,17 +171,22 @@ document.addEventListener('DOMContentLoaded', async () => {
               median: median,
               metric: metric,
               dungeons: p.dungeons || 8,
-              runs: p.runs || 1,
+              runs: p.runsCount || p.runs || 1,
               enriched: !!p.enriched,
               unlogged: isUnlogged,
               lastSync: p.lastEnrichedAt ? new Date(p.lastEnrichedAt).toLocaleTimeString() : (p.lastWclCheck ? new Date(p.lastWclCheck).toLocaleTimeString() : 'Discovered')
             };
           });
+
           renderDatabaseTable();
-          const totalCount = data.totalPlayers || data.total || (IS_CLOUD ? 131723 : playerDatabase.length);
+          const totalCount = playerDatabase.length;
           if (statTotalPlayers) statTotalPlayers.textContent = totalCount.toLocaleString();
           if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${totalCount.toLocaleString()} Players Recorded`;
           if (footerMetaDate) footerMetaDate.textContent = `Database: ${totalCount.toLocaleString()} Players Recorded`;
+
+          if (rawRealmsData) {
+            renderAnalyticsGrid(rawRealmsData);
+          }
         }
       }
     } catch (err) {
@@ -1149,62 +1168,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  btnDbPrevPage.addEventListener('click', async () => {
-    if (currentPage > 1) {
-      currentPage--;
-      if (IS_CLOUD && playerDatabase.length <= 50) {
-        await loadCloudPage(currentPage);
-      }
-      renderDatabaseTable();
-    }
-    return;
+  btnDbPrevPage.addEventListener('click', () => {
     if (currentPage > 1) {
       currentPage--;
       renderDatabaseTable();
     }
   });
 
-  btnDbNextPage.addEventListener('click', async () => {
-    currentPage++;
-    if (IS_CLOUD && playerDatabase.length <= 50) {
-      await loadCloudPage(currentPage);
-    }
-    renderDatabaseTable();
-    return;
+  btnDbNextPage.addEventListener('click', () => {
     currentPage++;
     renderDatabaseTable();
   });
-
-  
-  async function loadCloudPage(page) {
-    if (!IS_CLOUD) return;
-    try {
-      const pageStr = String(page).padStart(4, '0');
-      const res = await fetch(`${R2_BASE}/api/us/page_${pageStr}.json`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.players)) {
-          playerDatabase = data.players.map(p => ({
-            name: p.name,
-            realm: p.realm,
-            realmSlug: p.realmSlug || p.realm.toLowerCase().replace(/['\s]/g, ''),
-            region: (p.region || 'US').toUpperCase(),
-            class: p.class,
-            spec: p.spec,
-            role: p.role,
-            rioScore: p.rioScore || 0,
-            median: p.medianParse || 0,
-            metric: p.role === 'Tank' ? 'Speed' : (p.role === 'Healer' ? 'HPS' : 'DPS'),
-            dungeons: 8,
-            runs: 1,
-            enriched: !!p.enriched,
-            unlogged: !!p.unlogged,
-            lastSync: 'Discovered'
-          }));
-        }
-      }
-    } catch(e) {}
-  }
 
   function renderDatabaseTable() {
     const searchVal = dbSearchInput.value.trim().toLowerCase();
