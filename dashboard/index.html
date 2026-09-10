@@ -538,52 +538,51 @@
         <span id="footerMetaDate">Database: 131,723 Players Stored in R2</span>
       </div>
     </footer>
+  </div>
 
-    <!-- Master Access Login Gate Overlay -->
-    <div class="login-gate-overlay" id="loginGateOverlay">
-      <div class="login-gate-card">
-        <div class="login-header">
-          <div class="login-crest-wrap">
-            <img src="assets/icon.png" class="login-crest" alt="PartyFinder Crest">
+  <!-- AUTHENTICATION & LOGIN GATE OVERLAY -->
+  <div class="login-overlay" id="loginGateOverlay">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-crest-wrap">
+          <img src="assets/icon.png" class="login-crest" alt="PartyFinder Crest">
+        </div>
+        <div class="login-title">PARTYFINDER <span class="brand-tag">CLOUD STUDIO</span></div>
+        <div class="login-sub">Strategy 1 Deep Harvester &amp; Cloud Vault Access</div>
+      </div>
+
+      <div class="login-error-banner" id="loginErrorBanner" style="display: none;"></div>
+
+      <!-- Master Access Passcode Form -->
+      <form id="formMasterKey" class="login-form">
+        <div class="form-group">
+          <label class="form-label">Admin Master Passcode / PIN</label>
+          <div class="input-with-icon">
+            <span class="field-icon">🔑</span>
+            <input type="password" id="loginMasterPasscode" class="login-input" placeholder="Enter Master Passcode..." autocomplete="current-password" autofocus style="padding-right: 65px;">
+            <button type="button" class="btn-micro" id="btnToggleLoginPasscode" style="position: absolute; right: 8px;">Show</button>
           </div>
-          <div class="login-title">PARTYFINDER <span class="brand-tag">CLOUD STUDIO</span></div>
-          <div class="login-sub">Strategy 1 Deep Harvester &amp; Cloud Vault Access</div>
+          <span class="field-hint">Validated against Supabase vault (Default: <code>partyfinder</code>)</span>
         </div>
 
-        <div class="login-error-banner" id="loginErrorBanner" style="display: none;"></div>
-
-        <!-- Master Access Passcode Form -->
-        <form id="formMasterKey" class="login-form">
-          <div class="form-group">
-            <label class="form-label">Admin Master Passcode / PIN</label>
-            <div class="input-with-icon">
-              <span class="field-icon">🔑</span>
-              <input type="password" id="loginMasterPasscode" class="login-input" placeholder="Enter Master Passcode..." autocomplete="current-password" autofocus style="padding-right: 65px;">
-              <button type="button" class="btn-micro" id="btnToggleLoginPasscode" style="position: absolute; right: 8px;">Show</button>
-            </div>
-            <span class="field-hint">Validated against Supabase vault (Default: <code>partyfinder</code>)</span>
-          </div>
-
-          <div class="form-options">
-            <label class="checkbox-label">
-              <input type="checkbox" id="chkRememberMe" checked>
-              <span>Remember this device</span>
-            </label>
-          </div>
-
-          <button type="submit" class="btn btn-hero btn-login" id="btnMasterKeySubmit">
-            <span>UNLOCK STUDIO</span>
-          </button>
-        </form>
-
-        <div class="login-footer">
-          <span class="vault-secured-tag">
-            <span class="pulse-dot"></span> End-to-End Vault Encryption Active
-          </span>
+        <div class="form-options">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chkRememberMe" checked>
+            <span>Remember this device</span>
+          </label>
         </div>
+
+        <button type="submit" class="btn btn-hero btn-login" id="btnMasterKeySubmit">
+          <span>UNLOCK STUDIO</span>
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <span class="vault-secured-tag">
+          <span class="pulse-dot"></span> End-to-End Vault Encryption Active
+        </span>
       </div>
     </div>
-
   </div>
 
   <!-- Supabase JS Client via CDN -->
