@@ -108,12 +108,16 @@ async function main() {
 
     // Check if user set a manual override or paused harvester
     let manualJob = null;
+    let initialCountThisRun = 0;
     try {
       const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
       const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
       const mEntry = secretRows?.find(s => s.key === 'manual_job_state');
       if (mEntry && mEntry.value) {
         manualJob = typeof mEntry.value === 'string' ? JSON.parse(mEntry.value) : mEntry.value;
+      }
+      if (manualJob && manualJob.running && typeof manualJob.countThisRun === 'number') {
+        initialCountThisRun = manualJob.countThisRun;
       }
 
       if (manualJob && manualJob.running) {
@@ -212,7 +216,7 @@ async function main() {
             paused: false,
             mode: 'wcl',
             region,
-            countThisRun: accumulatedEnrichedThisTick,
+            countThisRun: initialCountThisRun + accumulatedEnrichedThisTick,
             recentLogs: logs.slice(-30),
             recentEnriched: allRecentEnriched.slice(-20),
             totalTracked: curTotal,
@@ -289,7 +293,7 @@ async function main() {
           paused: false,
           mode: 'raiderio',
           region,
-          countThisRun: accumulatedNewThisTick,
+          countThisRun: initialCountThisRun + accumulatedNewThisTick,
           page: result.nextPage,
           recentLogs: logs.slice(-30),
           recentDiscovered: allRecentDiscovered.slice(-20),
@@ -345,7 +349,7 @@ async function main() {
           paused: false,
           mode: lastTickResult.mode || targetMode || 'wcl',
           region,
-          countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? accumulatedEnrichedThisTick : accumulatedNewThisTick,
+          countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? (initialCountThisRun + accumulatedEnrichedThisTick) : (initialCountThisRun + accumulatedNewThisTick),
           page: registry.lastScannedPage || 0
         }
       };
@@ -405,7 +409,7 @@ async function main() {
         paused: false,
         mode: lastTickResult.mode || targetMode || 'wcl',
         region,
-        countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? accumulatedEnrichedThisTick : accumulatedNewThisTick,
+        countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? (initialCountThisRun + accumulatedEnrichedThisTick) : (initialCountThisRun + accumulatedNewThisTick),
         page: registry.lastScannedPage || 0
       }
     };
