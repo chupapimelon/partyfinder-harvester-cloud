@@ -1878,44 +1878,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     return cachedWclAccessToken;
   }
 
-  // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct)
-  async function fetchRaiderIoRankings(region, page) {
+  // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct) with auto-retry
+  async function fetchRaiderIoRankings(region, page, maxRetries = 3) {
     const rioPath = `mythic-plus/rankings/characters?region=${region}&season=${CURRENT_SEASON}&class=all&role=all&page=${page}`;
     const directUrl = `https://raider.io/api/${rioPath}`;
     let res = null;
     let lastErr = null;
 
-    // 1. Try local or current-origin proxy endpoint
-    try {
-      res = await fetch(`/api/raiderio/${rioPath}`);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // 1. Try local or current-origin proxy endpoint
+      try {
+        res = await fetch(`/api/raiderio/${rioPath}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.rankings || Array.isArray(data))) return data;
+        }
+      } catch (e) {
+        lastErr = e;
       }
-    } catch (e) {
-      lastErr = e;
-    }
 
-    // 2. Try the production Cloudflare Pages proxy on harvester.imongmama.online (has CORS: *)
-    try {
-      res = await fetch(`https://harvester.imongmama.online/api/raiderio/${rioPath}`);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
+      // 2. Try the production Cloudflare Pages proxy on harvester.imongmama.online (has CORS: *)
+      try {
+        res = await fetch(`https://harvester.imongmama.online/api/raiderio/${rioPath}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.rankings || Array.isArray(data))) return data;
+        }
+      } catch (e) {
+        lastErr = e;
       }
-    } catch (e) {
-      lastErr = e;
-    }
 
-    // 3. Try direct fetch (works if running in Node/Electron or CORS-permissive environment)
-    try {
-      res = await fetch(directUrl);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
+      // 3. Try direct fetch (works if running in Node/Electron or CORS-permissive environment)
+      try {
+        res = await fetch(directUrl);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.rankings || Array.isArray(data))) return data;
+        }
+      } catch (e) {
+        lastErr = e;
       }
-    } catch (e) {
-      lastErr = e;
+
+      if (attempt < maxRetries) {
+        const backoffMs = attempt * 1500;
+        appendLog('warn', `[Raider.IO] Page ${page} temporary notice (${res ? res.status : (lastErr ? lastErr.message : '500')}) - attempt ${attempt}/${maxRetries}. Retrying in ${backoffMs / 1000}s...`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
     }
 
     throw new Error(`Failed to fetch Raider.IO rankings (${res ? res.status : (lastErr ? lastErr.message : 'Network error')})`);
@@ -2147,10 +2155,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             cloudCrawlerPage = Math.floor(playerDatabase.length / 100);
           }
           const page = cloudCrawlerPage;
-          cloudCrawlerPage++;
 
           const rioData = await fetchRaiderIoRankings(reg, page);
           if (rioData) {
+            cloudCrawlerPage++;
             const rankings = rioData.rankings?.rankedCharacters || rioData.rankings?.ranking?.records || (Array.isArray(rioData.rankings) ? rioData.rankings : []);
             if (!rankings || rankings.length === 0) {
               appendLog('info', `[24/7 Auto-Pilot] Reached end of active Raider.IO rankings at Page ${page}. Resetting pointer to Page 0.`);
@@ -2554,8 +2562,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             cloudSweepPage = Math.floor(playerDatabase.length / 100);
           }
           const currentPage = cloudSweepPage;
-          cloudSweepPage++;
 
+          // Fetch the page without advancing pointer yet
           const data = await fetchRaiderIoRankings(region, currentPage);
           const rankings = data.rankings?.rankedCharacters || data.rankings?.ranking?.records || (Array.isArray(data.rankings) ? data.rankings : []);
 
@@ -2609,6 +2617,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
           });
 
+          // ONLY advance page pointer after successful fetch & processing
+          cloudSweepPage++;
+
           const startRank = (currentPage * 100) + 1;
           const endRank = (currentPage + 1) * 100;
           liveEnrichedCounter += newChars;
@@ -2626,7 +2637,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           updateTelemetryHUD();
         }
       } catch (err) {
-        appendLog('error', `[Job Error] ${err.message}`);
+        appendLog('error', `[Job Error] ${err.message} on Page ${cloudSweepPage}. Retrying Page ${cloudSweepPage} in 3s...`);
+        await new Promise(r => setTimeout(r, 3000));
       }
 
       await new Promise(r => setTimeout(r, 1000));

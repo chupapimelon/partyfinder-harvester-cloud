@@ -75,9 +75,8 @@ async function scanRaiderIoPages(registry, options = {}) {
 
         if (!res.ok) {
           const bodyTxt = await res.text().catch(() => '');
-          lastErr = new Error(`HTTP ${res.status}: ${bodyTxt.slice(0, 100)}`);
-          if (res.status === 429) {
-            console.warn(`[RaiderIO] Rate limited (429) on page ${p}, backing off...`);
+          if (res.status === 429 || res.status >= 500) {
+            console.warn(`[RaiderIO] HTTP ${res.status} on page ${p} (attempt ${attempt}/3), backing off...`);
             await new Promise(r => setTimeout(r, 2000 * attempt));
             continue;
           }

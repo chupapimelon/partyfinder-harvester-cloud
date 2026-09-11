@@ -18,13 +18,18 @@ export async function onRequest(context) {
     const subPath = url.pathname.replace(/^\/api\/raiderio\/?/, '');
     const rioUrl = `https://raider.io/api/${subPath}${url.search}`;
     try {
-      const res = await fetch(rioUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-        }
-      });
+      let res;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        res = await fetch(rioUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+          }
+        });
+        if (res.ok || res.status < 500) break;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+      }
       const body = await res.arrayBuffer();
       const headers = new Headers();
       headers.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
