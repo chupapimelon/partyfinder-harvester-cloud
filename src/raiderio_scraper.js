@@ -188,6 +188,8 @@ async function scanRaiderIoPages(registry, options = {}) {
     skippedLowLevel: skippedLowLevelCount,
     season,
     levelCap,
+    startPage: pageStart,
+    endPage: lastScannedPage,
     lastScannedPage,
     nextPage: registry.lastScannedPage || 0,
     charactersProcessed: runsProcessed,

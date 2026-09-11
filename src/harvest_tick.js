@@ -238,13 +238,16 @@ async function main() {
         const newFound = result.newPlayersCount || 0;
         accumulatedNewThisTick += newFound;
         const totalInReg = Object.keys(registry.players).length;
-        const startRank = (result.lastScannedPage * 100) + 1;
-        const endRank = (result.nextPage || (result.lastScannedPage + 5)) * 100;
+        const startPage = result.startPage !== undefined ? result.startPage : (result.nextPage ? result.nextPage - 5 : result.lastScannedPage);
+        const endPage = result.endPage !== undefined ? result.endPage : result.lastScannedPage;
+        const startRank = (startPage * 100) + 1;
+        const endRank = (endPage + 1) * 100;
+        const pageSpan = (endPage - startPage + 1);
 
         if (newFound > 0) {
-          logs.push(makeLog('success', `[Raider.IO] Cloud worker scanned ranks #${startRank}-#${endRank} (Pages ${result.lastScannedPage}-${(result.nextPage || result.lastScannedPage + 1) - 1}): +${newFound} newly added. Database: ${totalInReg.toLocaleString()} players.`));
+          logs.push(makeLog('success', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): +${newFound} newly added. Database: ${totalInReg.toLocaleString()} players.`));
         } else {
-          logs.push(makeLog('info', `[Raider.IO] Cloud worker scanned ranks #${startRank}-#${endRank} (Pages ${result.lastScannedPage}-${(result.nextPage || result.lastScannedPage + 1) - 1}): Verified ${result.charactersProcessed || 500} characters (all ${totalInReg.toLocaleString()} pushers already tracked in database).`));
+          logs.push(makeLog('info', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): Verified ${result.charactersProcessed || (pageSpan * 100)} characters (all ${totalInReg.toLocaleString()} pushers already tracked in database).`));
         }
 
         const tickDiscovered = (result.discovered || []).map(p => ({
