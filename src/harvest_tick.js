@@ -57,8 +57,18 @@ async function main() {
 
     // Check if Clean Slate Reset was requested
     try {
-      const resetReq = await sb.getState('reset_requested');
+      let isResetRequested = false;
+      const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
+      const resetSecret = secretRows?.find(s => s.key === 'clean_slate_reset');
+      if (resetSecret && resetSecret.value === 'requested') {
+        isResetRequested = true;
+      }
+      const resetReq = await sb.getState('reset_requested').catch(() => null);
       if (resetReq && resetReq.enabled) {
+        isResetRequested = true;
+      }
+
+      if (isResetRequested) {
         console.log('[Cloud Tick] Clean Slate Reset requested! Wiping R2 registry and restarting from Page 0...');
         logs.push(makeLog('warn', `[Clean Slate Reset] Purged ${totalBefore.toLocaleString()} players from R2. Re-crawling from Page 0 under ${seasonInfo.slug} (Level Cap: ${seasonInfo.levelCap})!`));
         registry.players = {};
@@ -67,7 +77,8 @@ async function main() {
         registry.season = seasonInfo.slug;
         registry.levelCap = seasonInfo.levelCap;
         await r2.savePlayerRegistry(region, registry);
-        await sb.setState('reset_requested', { enabled: false, wipedAt: new Date().toISOString() });
+        await sb.getClient().from('app_secrets').upsert({ key: 'clean_slate_reset', value: 'completed' }, { onConflict: 'key' });
+        await sb.setState('reset_requested', { enabled: false, wipedAt: new Date().toISOString() }).catch(() => {});
         await sb.setState('progress', {
           totalUnique: 0,
           enrichedCount: 0,
@@ -77,7 +88,8 @@ async function main() {
           season: seasonInfo.slug,
           levelCap: seasonInfo.levelCap,
           updatedAt: new Date().toISOString()
-        });
+        }).catch(() => {});
+        console.log('[Cloud Tick] Clean Slate Reset completed successfully.');
       }
     } catch (resetErr) {
       console.warn('[Cloud Tick] Reset check notice:', resetErr.message);
