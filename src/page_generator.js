@@ -42,10 +42,10 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
   await r2.putJSON(`api/${reg}/meta.json`, meta);
 
   // 2. Generate paginated player files
-  // Only regenerate pages that contain recently modified players to save R2 writes
-  // For now, regenerate all pages (optimize later if R2 write limits are hit)
+  // Only regenerate the top active pages (first 20 pages = top 1,000 players) on regular ticks to save R2 writes and prevent job timeouts
+  const pagesToGenerate = Math.min(totalPages, 20);
   const uploadPromises = [];
-  for (let i = 0; i < totalPages; i++) {
+  for (let i = 0; i < pagesToGenerate; i++) {
     const pageNum = String(i + 1).padStart(4, '0');
     const start = i * PAGE_SIZE;
     const pageData = players.slice(start, start + PAGE_SIZE).map(p => ({

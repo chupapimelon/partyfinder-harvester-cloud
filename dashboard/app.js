@@ -1419,37 +1419,293 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let cloudCrawlerPage = 0;
+  let cachedWclAccessToken = null;
+  let cachedWclTokenExpiresAt = 0;
+
+  async function getWclAccessToken() {
+    const now = Date.now();
+    if (cachedWclAccessToken && now < cachedWclTokenExpiresAt - 60000) {
+      return cachedWclAccessToken;
+    }
+
+    let clientId = cfgWclClientId?.value?.trim();
+    let clientSecret = cfgWclClientSecret?.value?.trim();
+
+    if (!clientId || !clientSecret) {
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?select=key,value`, {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        });
+        if (res.ok) {
+          const secrets = await res.json();
+          clientId = clientId || secrets.find(s => s.key === 'wcl_client_id')?.value;
+          clientSecret = clientSecret || secrets.find(s => s.key === 'wcl_client_secret')?.value;
+        }
+      } catch (e) {}
+    }
+
+    if (!clientId || !clientSecret) {
+      throw new Error('WCL Credentials not configured in Supabase Vault or settings.');
+    }
+
+    const authString = btoa(`${clientId}:${clientSecret}`);
+    const tokenRes = await fetch('https://www.warcraftlogs.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'PartyFinder-Harvester/2.0'
+      },
+      body: 'grant_type=client_credentials'
+    });
+
+    if (!tokenRes.ok) {
+      const errTxt = await tokenRes.text().catch(() => '');
+      throw new Error(`WCL OAuth failed (${tokenRes.status}): ${errTxt}`);
+    }
+
+    const tokenData = await tokenRes.json();
+    cachedWclAccessToken = tokenData.access_token;
+    const ttl = tokenData.expires_in || 3600;
+    cachedWclTokenExpiresAt = now + (ttl * 1000);
+    return cachedWclAccessToken;
+  }
+
+  async function enrichSinglePlayerWithWcl(player, token, zoneId = 55) {
+    const cleanSlug = cleanRealmSlug(player.realmSlug || player.realm || '');
+    const metric = player.role === 'Tank' ? 'playerspeed' : (player.role === 'Healer' ? 'hps' : 'dps');
+    const region = (player.region || currentActiveRegion || 'us').toLowerCase();
+
+    const query = `
+      query {
+        characterData {
+          character(name: "${player.name}", serverSlug: "${cleanSlug}", serverRegion: "${region}") {
+            id
+            classID
+            zoneRankings(zoneID: ${zoneId}, metric: ${metric})
+          }
+        }
+      }
+    `;
+
+    const res = await fetch('https://www.warcraftlogs.com/api/v2/client', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'PartyFinder-Harvester/2.0'
+      },
+      body: JSON.stringify({ query })
+    });
+
+    if (!res.ok) {
+      if (res.status === 429) {
+        throw new Error('WCL_RATE_LIMIT_HIT');
+      }
+      throw new Error(`WCL GraphQL HTTP ${res.status}`);
+    }
+
+    const qData = await res.json();
+    if (qData.errors && qData.errors.length > 0) {
+      throw new Error(qData.errors[0].message || 'WCL GraphQL Error');
+    }
+
+    const charData = qData.data?.characterData?.character;
+    const rankings = charData?.zoneRankings;
+
+    let medianParse = 0;
+    let bestParse = 0;
+    let totalRuns = 0;
+    let isUnlogged = false;
+
+    if (rankings && rankings.allOverview && rankings.allOverview.length > 0) {
+      const parses = rankings.allOverview.map(r => r.rankPercent || 0).sort((a, b) => a - b);
+      bestParse = Math.max(...parses, 0);
+      const mid = Math.floor(parses.length / 2);
+      medianParse = parses.length % 2 !== 0 ? parses[mid] : ((parses[mid - 1] + parses[mid]) / 2);
+      totalRuns = rankings.totalRuns || parses.length;
+    } else if (rankings && typeof rankings.bestPerformanceAverage === 'number') {
+      bestParse = rankings.bestPerformanceAverage || 0;
+      medianParse = rankings.medianPerformanceAverage || bestParse;
+      totalRuns = rankings.totalRuns || 0;
+    } else {
+      isUnlogged = true;
+    }
+
+    player.enriched = true;
+    player.lastEnrichedAt = Date.now();
+    player.wcl = {
+      characterId: charData?.id || null,
+      metric: metric.toUpperCase(),
+      bestParse: Math.round(bestParse * 10) / 10,
+      medianParse: Math.round(medianParse * 10) / 10,
+      totalRuns: totalRuns,
+      unlogged: isUnlogged,
+      zoneId: zoneId,
+    };
+    player.median = player.wcl.medianParse;
+    player.unlogged = isUnlogged;
+    player.lastSync = new Date().toLocaleTimeString();
+
+    return player;
+  }
+
+  let lastGhDispatchTime = 0;
+  async function triggerCloudHarvesterDispatch() {
+    const now = Date.now();
+    if (now - lastGhDispatchTime < 180000) return; // Limit to once every 3 min
+    lastGhDispatchTime = now;
+
+    try {
+      let token = cfgGithubToken?.value?.trim();
+      if (!token) {
+        const tokenRes = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.github_token&select=value`, {
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+        });
+        const tokenData = await tokenRes.json();
+        token = tokenData && tokenData[0] ? tokenData[0].value : null;
+      }
+      if (token) {
+        fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'PartyFinder-Harvester-Cloud'
+          },
+          body: JSON.stringify({ ref: 'main' })
+        }).catch(() => {});
+      }
+    } catch (e) {}
+  }
 
   async function executeAutoPilotTick() {
     if (!isAutoPilotRunning || isAutoPilotBusy) return;
     isAutoPilotBusy = true;
     timerCountdownSec = 60;
 
-    if (IS_CLOUD) {
+    try {
       updatePaceBadge();
-      const reg = (currentActiveRegion || 'US').toLowerCase();
-      const batchSize = getOptimalBatchSize();
-      const tierName = batchSize >= 50 ? 'Platinum (18k)' : (batchSize >= 25 ? 'Gold (9k)' : 'Standard (3.6k)');
-      
-      try {
-        appendLog('info', `[24/7 Auto-Pilot] Fetching authentic live pushers from Raider.IO leaderboards (Page ${cloudCrawlerPage + 1})...`);
-        const rioRes = await fetch(`https://raider.io/api/v1/mythic-plus/runs?season=season-mn-2&region=${reg}&page=${cloudCrawlerPage}`);
-        cloudCrawlerPage = (cloudCrawlerPage + 1) % 50;
 
-        if (rioRes.ok) {
-          const rioData = await rioRes.json();
-          const runs = rioData.rankings || [];
-          let discoveredCount = 0;
-          runs.forEach(item => {
-            const run = item.run;
-            if (!run || !run.roster) return;
-            run.roster.forEach(m => {
-              const c = m.character;
+      // Ensure player database is loaded
+      if (!playerDatabase || playerDatabase.length === 0) {
+        appendLog('info', '[24/7 Auto-Pilot] Syncing player database from Cloudflare R2 before starting batch...');
+        await loadHarvestPlayers();
+      }
+
+      // Check Rate Limit Quota Guard
+      const pointsLeft = currentWclRateLimit?.pointsRemaining ?? latestHarvestStatus?.rateLimit?.pointsRemaining ?? 3600;
+      if (pointsLeft < 30) {
+        const resetSec = currentWclRateLimit?.pointsResetIn ?? latestHarvestStatus?.rateLimit?.pointsResetIn ?? 60;
+        appendLog('warn', `[WCL Quota Guard] Hourly points near limit (${Math.round(pointsLeft)} pts left). Pausing batch until quota resets in ${Math.ceil(resetSec / 60)}m...`);
+        return;
+      }
+
+      const batchSize = getOptimalBatchSize();
+      const limit = currentWclRateLimit?.limitPerHour || latestHarvestStatus?.rateLimit?.limitPerHour || 3600;
+      const tierName = limit >= 18000 ? 'Platinum (18k)' : (limit >= 9000 ? 'Gold (9k)' : 'Standard (3.6k)');
+
+      // Prioritize un-enriched players sorted by highest Raider.IO score
+      const pendingPlayers = playerDatabase.filter(p => !p.enriched);
+
+      if (pendingPlayers.length > 0) {
+        // ENRICH MODE: Process top un-enriched pushers with authentic WCL parses
+        pendingPlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+        const targetBatch = pendingPlayers.slice(0, batchSize);
+
+        appendLog('info', `[24/7 Auto-Pilot] Enriching next batch of ${targetBatch.length} players with WCL (${tierName} pace)...`);
+
+        let token = null;
+        try {
+          token = await getWclAccessToken();
+        } catch (tokenErr) {
+          appendLog('error', `[WCL Auth Error] ${tokenErr.message}`);
+          return;
+        }
+
+        let enrichedThisBatch = 0;
+        for (const p of targetBatch) {
+          if (!isAutoPilotRunning) break;
+          try {
+            await enrichSinglePlayerWithWcl(p, token, 55);
+            enrichedThisBatch++;
+
+            // Stream live card into left activity feed
+            streamDiscoveredPlayerCard(p);
+
+            // Log authentic parse result
+            if (p.unlogged) {
+              appendLog('warn', `◽ [Unlogged] ${p.name}-${p.realm} • Has Raider.IO score (${p.rioScore ? p.rioScore.toFixed(0) : 'M+'}) but 0 public WCL logs.`);
+            } else {
+              appendLog('success', `⚡ [Enriched] ${p.name}-${p.realm} • ${p.role} Median: ${p.median}%`);
+            }
+
+            liveEnrichedCounter++;
+            if (livePlayerCounter) {
+              livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+            }
+
+            // Deduct from local rate limit tracker (6 pts per player lookup)
+            if (currentWclRateLimit) {
+              currentWclRateLimit.pointsSpentThisHour = Math.min(limit, (currentWclRateLimit.pointsSpentThisHour || 0) + 6);
+              currentWclRateLimit.pointsRemaining = Math.max(0, limit - currentWclRateLimit.pointsSpentThisHour);
+              updateWclRateLimitUI(currentWclRateLimit);
+            }
+
+            // 100ms pause between lookups to respect rate limits
+            await new Promise(r => setTimeout(r, 100));
+          } catch (pErr) {
+            if (pErr.message === 'WCL_RATE_LIMIT_HIT') {
+              appendLog('warn', '[WCL Rate Limit] 429 Too Many Requests received. Pausing current batch.');
+              break;
+            }
+            appendLog('warn', `[WCL Parse Notice] ${p.name}-${p.realm}: ${pErr.message}`);
+          }
+        }
+
+        if (enrichedThisBatch > 0) {
+          appendLog('success', `[24/7 Auto-Pilot] Batch enriched: ${enrichedThisBatch} players parsed with authentic WCL logs.`);
+
+          // Update HUD stats
+          const totalScraped = playerDatabase.length;
+          const enrichedNum = playerDatabase.filter(p => p.enriched).length;
+          const pendingNum = Math.max(0, totalScraped - enrichedNum);
+          if (statEnrichedPlayers) statEnrichedPlayers.textContent = enrichedNum.toLocaleString();
+          if (statPendingPlayers) statPendingPlayers.textContent = pendingNum.toLocaleString();
+          const pct = totalScraped > 0 ? ((enrichedNum / totalScraped) * 100).toFixed(1) : '0.0';
+          const enrichProgressEl = document.getElementById('statEnrichProgress');
+          const enrichPercentEl = document.getElementById('statEnrichPercent');
+          if (enrichProgressEl) enrichProgressEl.style.width = `${pct}%`;
+          if (enrichPercentEl) enrichPercentEl.textContent = `${pct}% ENRICHED`;
+
+          // Trigger cloud harvester background job to persist progress to R2
+          if (IS_CLOUD) {
+            triggerCloudHarvesterDispatch();
+          }
+        }
+      } else {
+        // DISCOVERY MODE: All current players enriched -> Scrape new pushers from Raider.IO leaderboards
+        appendLog('info', `[24/7 Auto-Pilot] All current pushers enriched! Scanning Raider.IO Mythic+ leaderboards for new pushers...`);
+        try {
+          const reg = (currentActiveRegion || 'US').toLowerCase();
+          const page = cloudCrawlerPage;
+          cloudCrawlerPage = (cloudCrawlerPage + 1) % 50;
+
+          const rioUrl = `https://raider.io/api/mythic-plus/rankings/characters?region=${reg}&season=season-tww-2&class=all&role=all&page=${page}`;
+          const rioRes = await fetch(rioUrl);
+          if (rioRes.ok) {
+            const rioData = await rioRes.json();
+            const rankings = rioData.rankings?.ranking?.records || rioData.rankings || [];
+            let addedCount = 0;
+
+            rankings.forEach(item => {
+              const c = item.character || item;
               if (!c || !c.name) return;
               const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
               const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
-              const isEnriched = Math.random() > 0.3;
-              const medianVal = isEnriched ? +(91 + Math.random() * 8.9).toFixed(1) : 0;
               const pObj = {
                 name: c.name,
                 realm: c.realm?.name || 'Area 52',
@@ -1458,124 +1714,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                 class: c.class?.name || 'Warrior',
                 spec: c.spec?.name || 'Arms',
                 role,
-                rioScore: m.score || 3500 + Math.random() * 400,
-                median: medianVal,
+                rioScore: item.score || c.score || 3500,
+                median: 0,
                 metric,
                 dungeons: 8,
-                runs: run.mythic_level || 20,
-                enriched: isEnriched,
-                unlogged: !isEnriched,
-                lastSync: new Date().toLocaleTimeString()
+                runs: 1,
+                enriched: false,
+                unlogged: false,
+                lastSync: 'Queued'
               };
 
               const exists = playerDatabase.some(p => p.name.toLowerCase() === pObj.name.toLowerCase() && p.realm.toLowerCase() === pObj.realm.toLowerCase());
               if (!exists) {
                 playerDatabase.unshift(pObj);
-                discoveredCount++;
+                addedCount++;
                 streamDiscoveredPlayerCard(pObj);
-                if (isEnriched) {
-                  appendLog('success', `⚡ [Enriched] ${pObj.name}-${pObj.realm} • ${pObj.role} Median: ${medianVal}%`);
-                } else {
-                  appendLog('warn', `◽ [Unlogged] ${pObj.name}-${pObj.realm} • Has Raider.IO score but 0 public WCL logs.`);
-                }
               }
             });
-          });
 
-          liveEnrichedCounter += discoveredCount;
-          if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-          appendLog('success', `[24/7 Auto-Pilot] Tick completed: +${discoveredCount} pushers processed from authentic Raider.IO runs.`);
-        }
-      } catch (err) {
-        appendLog('warn', `[24/7 Auto-Pilot] Cycle sync notice: ${err.message}`);
-      } finally {
-        isAutoPilotBusy = false;
-        await fetchHarvestStatus();
-      }
-      return;
-    }
-
-    try {
-      const reg = (currentActiveRegion || 'US').toLowerCase();
-      const statRes = await fetch(`/api/harvest/status?region=${reg}`);
-      if (!statRes.ok) throw new Error(`Status query failed (${statRes.status})`);
-      
-      const sData = await statRes.json();
-      const pending = sData.pendingEnrichment ?? sData.stats?.pendingEnrichment ?? 0;
-
-      updatePaceBadge();
-
-      // Quota Guard: Check if hourly points are nearly exhausted
-      const pointsLeft = sData.rateLimit?.pointsRemaining ?? currentWclRateLimit?.pointsRemaining ?? 3600;
-      if (pointsLeft < 30) {
-        const resetSec = sData.rateLimit?.pointsResetIn ?? currentWclRateLimit?.pointsResetIn ?? 60;
-        appendLog('warn', `[WCL Quota Guard] Hourly points near limit (${Math.round(pointsLeft)} pts left). Pausing batch until quota resets in ${Math.ceil(resetSec / 60)}m...`);
-        await fetchHarvestStatus();
-        return;
-      }
-
-      const batchSize = getOptimalBatchSize();
-
-      if (pending > 0) {
-        const limit = sData.rateLimit?.limitPerHour || currentWclRateLimit?.limitPerHour || 3600;
-        const tierName = limit >= 18000 ? 'Platinum (18k)' : (limit >= 9000 ? 'Gold (9k)' : 'Standard (3.6k)');
-        appendLog('info', `[24/7 Auto-Pilot] Enriching next batch of ${batchSize} players with WCL (${tierName} pace)...`);
-        const enrichRes = await fetch('/api/harvest/wcl/enrich', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ region: reg, count: batchSize })
-        });
-        if (enrichRes.ok) {
-          const eData = await enrichRes.json();
-          if (eData.ok) {
-            const count = eData.enrichedCount || (Array.isArray(eData.enrichedPlayers) ? eData.enrichedPlayers.length : 0);
-            appendLog('success', `[24/7 Auto-Pilot] Batch enriched: ${count} players parsed with authentic WCL logs.`);
-            if (Array.isArray(eData.enrichedPlayers)) {
-              eData.enrichedPlayers.forEach(p => {
-                const median = p.wcl?.medianParse || 0;
-                if (p.wcl?.unlogged) {
-                  appendLog('warn', `◽ [Unlogged] ${p.name}-${p.realm} • Has Raider.IO score but 0 public WCL logs.`);
-                } else {
-                  appendLog('success', `⚡ [Enriched] ${p.name}-${p.realm} • ${p.role} Median: ${median}%`);
-                }
-                // Stream live card into left feed
-                streamDiscoveredPlayerCard(p);
-              });
-              liveEnrichedCounter += eData.enrichedPlayers.length;
-              if (livePlayerCounter) {
-                livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-              }
-            }
-          } else {
-            appendLog('error', `[24/7 Auto-Pilot WCL Error] ${eData.error || 'Unknown error'}`);
+            appendLog('success', `[24/7 Auto-Pilot] Raider.IO sweep complete: +${addedCount} new pushers queued for WCL enrichment.`);
           }
-        } else {
-          appendLog('error', `[24/7 Auto-Pilot] WCL server returned HTTP ${enrichRes.status}`);
-        }
-      } else {
-        appendLog('info', `[24/7 Auto-Pilot] Running Raider.IO discovery sweep to discover new pushers...`);
-        const scanRes = await fetch('/api/harvest/raiderio/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ region: reg, maxPages: 2 })
-        });
-        if (scanRes.ok) {
-          const scanData = await scanRes.json();
-          const added = scanData.newPlayersCount || 0;
-          const processed = scanData.charactersProcessed || 0;
-          appendLog('success', `[24/7 Auto-Pilot] Raider.IO sweep complete: +${added} newly added (${processed} verified).`);
-          if (Array.isArray(scanData.discovered)) {
-            scanData.discovered.forEach(p => streamDiscoveredPlayerCard(p));
-            liveEnrichedCounter += scanData.discovered.length;
-            if (livePlayerCounter) {
-              livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-            }
-          }
-        } else {
-          appendLog('error', `[24/7 Auto-Pilot] Raider.IO scan failed with HTTP ${scanRes.status}`);
+        } catch (rioErr) {
+          appendLog('warn', `[24/7 Auto-Pilot] Raider.IO discovery notice: ${rioErr.message}`);
         }
       }
-      await fetchHarvestStatus();
 
       // === Hourly Auto-Deploy Check ===
       const msSinceLastDeploy = Date.now() - lastAutoDeployTime;
@@ -1583,13 +1745,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         isAutoDeploying = true;
         appendLog('info', `🚀 [24/7 Auto-Pilot] Hourly milestone reached: Auto-deploying updated database to Cloudflare CDN...`);
         try {
-          const deployRes = await fetch('/api/harvest/deploy', { method: 'POST' });
-          const deployData = await deployRes.json();
-          if (deployData.ok) {
-            const totalPlayers = deployData.result?.stats?.totalPlayers?.toLocaleString() || '131k';
-            appendLog('success', `🚀 [CDN Auto-Deploy Complete] ${totalPlayers} players now live on Cloudflare edge (imongmama.online).`);
+          if (IS_CLOUD) {
+            triggerCloudHarvesterDispatch();
+            appendLog('success', `🚀 [CDN Auto-Deploy Complete] Cloud pipeline triggered for edge update (imongmama.online).`);
           } else {
-            appendLog('error', `[CDN Auto-Deploy Failed] ${deployData.error}`);
+            const deployRes = await fetch('/api/harvest/deploy', { method: 'POST' });
+            const deployData = await deployRes.json();
+            if (deployData.ok) {
+              const totalPlayers = deployData.result?.stats?.totalPlayers?.toLocaleString() || '131k';
+              appendLog('success', `🚀 [CDN Auto-Deploy Complete] ${totalPlayers} players now live on Cloudflare edge (imongmama.online).`);
+            } else {
+              appendLog('error', `[CDN Auto-Deploy Failed] ${deployData.error}`);
+            }
           }
         } catch (deployErr) {
           appendLog('error', `[CDN Auto-Deploy Error] ${deployErr.message}`);
@@ -1783,74 +1950,78 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       try {
         if (mode === 'wcl') {
-          // Enrich pushers from database
+          // Enrich pushers from database with authentic WCL logs
           const pending = playerDatabase.filter(p => !p.enriched);
+          pending.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
           const batch = pending.slice(0, 5);
           if (batch.length > 0) {
-            batch.forEach(p => {
-              p.enriched = true;
-              p.median = +(92 + Math.random() * 7.9).toFixed(1);
-              p.lastSync = new Date().toLocaleTimeString();
-              appendLog('success', `⚡ [Enriched] ${p.name}-${p.realm} • ${p.role} Median: ${p.median}%`);
-              streamDiscoveredPlayerCard(p);
-            });
-            liveEnrichedCounter += batch.length;
-            if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+            let token = await getWclAccessToken();
+            for (const p of batch) {
+              if (!isManualSweepActive) break;
+              try {
+                await enrichSinglePlayerWithWcl(p, token, 55);
+                streamDiscoveredPlayerCard(p);
+                if (p.unlogged) {
+                  appendLog('warn', `◽ [Unlogged] ${p.name}-${p.realm} • Has Raider.IO score (${p.rioScore?.toFixed(0) || 'M+'}) but 0 public WCL logs.`);
+                } else {
+                  appendLog('success', `⚡ [Enriched] ${p.name}-${p.realm} • ${p.role} Median: ${p.median}%`);
+                }
+                liveEnrichedCounter++;
+                if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+                await new Promise(r => setTimeout(r, 100));
+              } catch (pErr) {
+                appendLog('warn', `[WCL Parse Error] ${p.name}: ${pErr.message}`);
+              }
+            }
           } else {
             appendLog('info', '[WCL] All discovered players in current active queue have been enriched!');
             break;
           }
         } else {
-          // Raider.IO sweep
-          const url = `https://raider.io/api/v1/mythic-plus/runs?season=season-mn-2&region=${region}&page=${cloudSweepPage}`;
+          // Raider.IO sweep using authentic characters rankings endpoint
+          const url = `https://raider.io/api/mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${cloudSweepPage}`;
           cloudSweepPage = (cloudSweepPage + 1) % 50;
           const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
-            const runs = data.rankings || [];
+            const rankings = data.rankings?.ranking?.records || data.rankings || [];
             let newChars = 0;
-            runs.forEach(item => {
-              const run = item.run;
-              if (!run || !run.roster) return;
-              run.roster.forEach(m => {
-                const c = m.character;
-                if (!c || !c.name) return;
-                const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
-                const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
-                const isEnr = Math.random() > 0.4;
-                const medianVal = isEnr ? +(90 + Math.random() * 9.9).toFixed(1) : 0;
-                const pObj = {
-                  name: c.name,
-                  realm: c.realm?.name || 'Area 52',
-                  realmSlug: cleanRealmSlug(c.realm?.slug || c.realm?.name),
-                  region: region.toUpperCase(),
-                  class: c.class?.name || 'Warrior',
-                  spec: c.spec?.name || 'Arms',
-                  role,
-                  rioScore: m.score || 3500 + Math.random() * 400,
-                  median: medianVal,
-                  metric,
-                  dungeons: 8,
-                  runs: run.mythic_level || 20,
-                  enriched: isEnr,
-                  unlogged: !isEnr,
-                  lastSync: new Date().toLocaleTimeString()
-                };
+            rankings.forEach(item => {
+              const c = item.character || item;
+              if (!c || !c.name) return;
+              const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
+              const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
+              const pObj = {
+                name: c.name,
+                realm: c.realm?.name || 'Area 52',
+                realmSlug: cleanRealmSlug(c.realm?.slug || c.realm?.name),
+                region: region.toUpperCase(),
+                class: c.class?.name || 'Warrior',
+                spec: c.spec?.name || 'Arms',
+                role,
+                rioScore: item.score || c.score || 3500,
+                median: 0,
+                metric,
+                dungeons: 8,
+                runs: 1,
+                enriched: false,
+                unlogged: false,
+                lastSync: 'Queued'
+              };
 
-                const exists = playerDatabase.some(p => p.name.toLowerCase() === pObj.name.toLowerCase() && p.realm.toLowerCase() === pObj.realm.toLowerCase());
-                if (!exists) {
-                  playerDatabase.unshift(pObj);
-                  newChars++;
-                  streamDiscoveredPlayerCard(pObj);
-                }
-              });
+              const exists = playerDatabase.some(p => p.name.toLowerCase() === pObj.name.toLowerCase() && p.realm.toLowerCase() === pObj.realm.toLowerCase());
+              if (!exists) {
+                playerDatabase.unshift(pObj);
+                newChars++;
+                streamDiscoveredPlayerCard(pObj);
+              }
             });
 
             const startRank = (cloudSweepPage * 20) + 1;
             const endRank = (cloudSweepPage + 1) * 20;
             liveEnrichedCounter += newChars;
             if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-            appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${cloudSweepPage}): +${newChars} newly added. Database: ${(131723 + liveEnrichedCounter).toLocaleString()} players.`);
+            appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${cloudSweepPage}): +${newChars} newly added. Database: ${playerDatabase.length.toLocaleString()} players.`);
           }
         }
       } catch (err) {
