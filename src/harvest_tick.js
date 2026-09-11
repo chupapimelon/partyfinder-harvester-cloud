@@ -13,7 +13,7 @@ const r2 = require('./r2_client');
 const sb = require('./supabase_client');
 const { scanRaiderIoPages, CURRENT_SEASON } = require('./raiderio_scraper');
 const { enrichBatch } = require('./wcl_enricher');
-const { generateAndUploadPages } = require('./page_generator');
+const { generateAndUploadPages, uploadStatusOnly } = require('./page_generator');
 
 // WCL credentials — from GitHub Secrets env vars or Supabase vault
 const WCL_CLIENT_ID = process.env.WCL_CLIENT_ID;
@@ -39,7 +39,7 @@ async function main() {
       wclZoneId: 55,
     };
     const region = (config.primaryRegion || 'us').toLowerCase();
-    logs.push(makeLog('info', `[Cloud Tick] Starting for region [${region.toUpperCase()}]...`));
+    logs.push(makeLog('info', `[Cloud Tick] Starting 24/7 autonomous worker for [${region.toUpperCase()}]...`));
 
     // 2. Download player registry from R2
     console.log(`[R2] Downloading player registry for ${region}...`);
@@ -70,114 +70,158 @@ async function main() {
       }
     } catch (e) {}
 
-    // 4. Decide: Enrich or Discover
-    let tickResult = {};
+    // 4. 24/7 Autonomous Cycle Engine: 5 micro-cycles of 10 players each (10 players/min pace = 600/hr)
+    const TOTAL_CYCLES = 5;
+    const CYCLE_BATCH_SIZE = 10;
+    let accumulatedEnrichedThisTick = 0;
+    let allRecentEnriched = [];
+    let lastTickResult = {};
     const hasWclCreds = !!(wclClientId && wclClientSecret);
 
-    if (pendingBefore > 0 && hasWclCreds) {
-      // ENRICH MODE — Process un-enriched players via WCL (50 players per 5-min tick = 10 players/min = 600/hr)
-      const batchSize = Math.min(pendingBefore, config.batchSize || 50);
-      console.log(`[WCL] Enriching batch of ${batchSize} players (10 players/min pace)...`);
-      logs.push(makeLog('info', `[WCL Enricher] Processing batch of ${batchSize} from ${pendingBefore} pending...`));
-
-      const result = await enrichBatch(registry, {
-        region,
-        batchSize: batchSize,
-        zoneId: config.wclZoneId || 55,
-        clientId: wclClientId,
-        clientSecret: wclClientSecret,
-      });
-
-      tickResult = {
-        mode: 'wcl',
-        enrichedCount: result.enrichedCount,
-        remainingInQueue: result.remainingInQueue,
-      };
-
-      if (result.enrichedCount > 0) {
-        logs.push(makeLog('success', `[WCL Enricher] Enriched ${result.enrichedCount} players. ${result.remainingInQueue} remaining.`));
-        for (const p of result.enrichedPlayers.slice(0, 5)) {
-          const parseStr = p.wcl?.unlogged ? 'UNLOGGED' : `${p.wcl?.medianParse?.toFixed(1)}% median`;
-          logs.push(makeLog('info', `  ✓ ${p.name}-${p.realm} (${p.rioScore} R.IO) → ${parseStr}`));
+    for (let cycle = 0; cycle < TOTAL_CYCLES; cycle++) {
+      // Responsively check if user paused from dashboard
+      try {
+        const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
+        const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
+        if (statusEntry && statusEntry.value === 'paused') {
+          console.log(`[Cloud Tick] Harvester paused by user override at cycle ${cycle + 1}/${TOTAL_CYCLES}. Standing by.`);
+          logs.push(makeLog('warn', `[Cloud Tick] Harvester paused by user override.`));
+          break;
         }
+      } catch (e) {}
+
+      const curTotal = Object.keys(registry.players).length;
+      const curEnriched = Object.values(registry.players).filter(p => p.enriched).length;
+      const curPending = curTotal - curEnriched;
+
+      if (curPending > 0 && hasWclCreds) {
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (10/min)...`);
+        logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching 10 players...`));
+
+        const result = await enrichBatch(registry, {
+          region,
+          batchSize: CYCLE_BATCH_SIZE,
+          zoneId: config.wclZoneId || 55,
+          clientId: wclClientId,
+          clientSecret: wclClientSecret,
+        });
+
+        if (result.enrichedCount > 0) {
+          accumulatedEnrichedThisTick += result.enrichedCount;
+          allRecentEnriched = [...result.enrichedPlayers, ...allRecentEnriched].slice(0, 30);
+          logs.push(makeLog('success', `[WCL Enricher] +${result.enrichedCount} players enriched (${curEnriched + result.enrichedCount} total).`));
+          for (const p of result.enrichedPlayers.slice(0, 3)) {
+            const parseStr = p.wcl?.unlogged ? 'UNLOGGED' : `${p.wcl?.medianParse?.toFixed(1)}% median`;
+            logs.push(makeLog('info', `  ✓ ${p.name}-${p.realm} (${p.rioScore} R.IO) → ${parseStr}`));
+          }
+        }
+
+        lastTickResult = {
+          mode: 'wcl',
+          enrichedCount: accumulatedEnrichedThisTick,
+          recentEnriched: allRecentEnriched,
+          remainingInQueue: result.remainingInQueue,
+        };
       } else {
-        logs.push(makeLog('warn', `[WCL Enricher] No players enriched this tick.`));
+        // DISCOVERY MODE: Scrape new pushers from Raider.IO leaderboards
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Scanning Raider.IO leaderboards...`);
+        const result = await scanRaiderIoPages(registry, {
+          region,
+          pageCount: 2,
+          season: CURRENT_SEASON,
+        });
+        lastTickResult = {
+          mode: 'raiderio',
+          newPlayersCount: result.newPlayersCount,
+          updatedPlayersCount: result.updatedPlayersCount,
+          lastScannedPage: result.lastScannedPage,
+          nextPage: result.nextPage,
+        };
       }
-    } else {
-      // DISCOVERY MODE — Scrape new players from Raider.IO
-      console.log(`[RaiderIO] Scraping ${2} pages from page ${registry.lastScannedPage}...`);
-      logs.push(makeLog('info', `[Raider.IO] Scanning pages ${registry.lastScannedPage}-${registry.lastScannedPage + 1}...`));
 
-      const result = await scanRaiderIoPages(registry, {
-        region,
-        pageCount: 2,
-        season: CURRENT_SEASON,
-      });
+      // Save registry to R2
+      await r2.savePlayerRegistry(region, registry);
 
-      tickResult = {
-        mode: 'raiderio',
-        newPlayersCount: result.newPlayersCount,
-        updatedPlayersCount: result.updatedPlayersCount,
-        lastScannedPage: result.lastScannedPage,
-        nextPage: result.nextPage,
+      // Upload status.json so dashboard immediately sees the updated counts (+10)
+      const currentEnrichedTotal = Object.values(registry.players).filter(p => p.enriched).length;
+      const currentPendingTotal = Object.keys(registry.players).length - currentEnrichedTotal;
+      const statusData = {
+        mode: lastTickResult.mode || 'wcl',
+        lastTickAt: new Date().toISOString(),
+        lastTickResult: lastTickResult,
+        recentEnriched: allRecentEnriched,
+        logs: logs.slice(-20),
+        running: true,
+        paused: false,
       };
+      await uploadStatusOnly(registry, region, statusData);
 
-      if (result.newPlayersCount > 0) {
-        logs.push(makeLog('success', `[Raider.IO] Discovered ${result.newPlayersCount} new players, updated ${result.updatedPlayersCount}. Next page: ${result.nextPage}`));
-      } else {
-        logs.push(makeLog('info', `[Raider.IO] Updated ${result.updatedPlayersCount} existing players. Next page: ${result.nextPage}`));
-      }
+      // Update Supabase progress state for Realtime
+      try {
+        const progress = (await sb.getState('progress')) || {};
+        progress[region] = {
+          lastScannedPage: registry.lastScannedPage || 0,
+          totalPlayers: Object.keys(registry.players).length,
+          enrichedPlayers: currentEnrichedTotal,
+          pendingEnrichment: currentPendingTotal,
+          lastTickAt: new Date().toISOString(),
+          lastTickMode: lastTickResult.mode || 'wcl',
+        };
+        await sb.setState('progress', progress);
+      } catch (e) {}
 
-      if (result.error) {
-        logs.push(makeLog('error', `[Raider.IO] Error: ${result.error}`));
+      // Wait ~48s for next 1-minute cycle (total cycle ~50-55s = 10 players/minute)
+      if (cycle < TOTAL_CYCLES - 1) {
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting 48s for next 10/min batch...`);
+        await new Promise(r => setTimeout(r, 48000));
       }
     }
 
-    // 5. Upload updated registry back to R2
-    console.log('[R2] Uploading updated player registry...');
-    await r2.savePlayerRegistry(region, registry);
-    const totalAfter = Object.keys(registry.players).length;
-    const enrichedAfter = Object.values(registry.players).filter(p => p.enriched).length;
-    console.log(`[R2] Saved: ${totalAfter} players (${enrichedAfter} enriched)`);
-    logs.push(makeLog('success', `[R2] Registry saved: ${totalAfter.toLocaleString()} players.`));
-
-    // 6. Regenerate static API pages
-    console.log('[PageGen] Regenerating static API pages...');
-    const statusData = {
-      mode: tickResult.mode || 'idle',
+    // 5. Regenerate static API pages for top 20 pages
+    console.log('[PageGen] Regenerating top static API pages...');
+    const finalStatus = {
+      mode: lastTickResult.mode || 'idle',
       lastTickAt: new Date().toISOString(),
-      lastTickResult: tickResult,
+      lastTickResult: lastTickResult,
+      recentEnriched: allRecentEnriched,
+      logs: logs.slice(-25),
       running: true,
       paused: false,
     };
-    await generateAndUploadPages(registry, region, statusData);
+    await generateAndUploadPages(registry, region, finalStatus);
     logs.push(makeLog('success', `[PageGen] Static API pages regenerated.`));
 
-    // 7. Update Supabase harvester state (triggers Realtime for dashboard/desktop)
-    const progress = await sb.getState('progress') || {};
-    progress[region] = {
-      lastScannedPage: registry.lastScannedPage || 0,
-      totalPlayers: totalAfter,
-      enrichedPlayers: enrichedAfter,
-      pendingEnrichment: totalAfter - enrichedAfter,
-      lastTickAt: new Date().toISOString(),
-      lastTickMode: tickResult.mode || 'idle',
-    };
-    await sb.setState('progress', progress);
-    await sb.appendLogs(logs);
+    // 6. Update final logs in Supabase
+    try {
+      await sb.appendLogs(logs.slice(-10));
+    } catch (_) {}
 
-    // Update recent_discovered if we have new players
-    if (tickResult.mode === 'raiderio' && tickResult.newPlayersCount > 0) {
-      const existing = (await sb.getState('recent_discovered')) || [];
-      // Keep last 30 discovered entries
-      const discovered = tickResult.discovered || [];
-      const combined = [...discovered.slice(0, 10), ...existing].slice(0, 30);
-      await sb.setState('recent_discovered', combined);
-    }
-
+    const totalAfter = Object.keys(registry.players).length;
+    const enrichedAfter = Object.values(registry.players).filter(p => p.enriched).length;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`\n=== Tick complete in ${elapsed}s ===`);
-    console.log(`Mode: ${tickResult.mode} | Players: ${totalAfter} | Enriched: ${enrichedAfter}`);
+    console.log(`\n=== 5-minute autonomous run complete in ${elapsed}s ===`);
+    console.log(`Total Players: ${totalAfter} | Enriched: ${enrichedAfter} (+${accumulatedEnrichedThisTick} this run)`);
+
+    // 7. Autonomous 24/7 Chain: If harvester is still running, trigger next workflow run!
+    try {
+      const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
+      const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
+      const ghEntry = secretRows?.find(s => s.key === 'github_token');
+      if (statusEntry && statusEntry.value === 'running' && ghEntry && ghEntry.value) {
+        console.log('[Autonomous Chain] Harvester state is ACTIVE. Dispatching next 5-minute cloud cycle...');
+        await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${ghEntry.value}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'PartyFinder-Autonomous-Worker'
+          },
+          body: JSON.stringify({ ref: 'main' })
+        });
+      }
+    } catch (chainErr) {
+      console.warn('[Autonomous Chain Notice]', chainErr.message);
+    }
 
   } catch (err) {
     console.error('[FATAL] Harvest tick failed:', err);

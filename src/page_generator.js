@@ -145,4 +145,25 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
   return { totalPages, meta };
 }
 
-module.exports = { generateAndUploadPages };
+async function uploadStatusOnly(registry, region, statusData) {
+  const reg = region.toLowerCase();
+  const players = Object.values(registry.players || {});
+  const totalPlayers = players.length;
+  const enrichedCount = players.filter(p => p.enriched).length;
+  const pendingCount = totalPlayers - enrichedCount;
+
+  const status = {
+    ...statusData,
+    region: reg.toUpperCase(),
+    totalPlayers,
+    enrichedPlayers: enrichedCount,
+    pendingEnrichment: pendingCount,
+    lastScannedPage: registry.lastScannedPage || 0,
+    updatedAt: Date.now(),
+    updatedAtISO: new Date().toISOString(),
+  };
+  await r2.putJSON('api/status.json', status);
+  return status;
+}
+
+module.exports = { generateAndUploadPages, uploadStatusOnly };

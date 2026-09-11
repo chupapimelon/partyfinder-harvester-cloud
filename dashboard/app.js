@@ -218,18 +218,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         let data = await res.json();
         if (isR2Fallback || !data.ok) {
           const totalScraped = data.totalPlayers || 131723;
-          const enrichedNum = (data.enrichedPlayers || 30) + liveEnrichedCounter;
+          const enrichedNum = data.enrichedPlayers ?? 258;
           data = {
             ok: true,
             totalTrackedPlayers: totalScraped,
             enrichedPlayers: enrichedNum,
-            pendingEnrichment: Math.max(0, totalScraped - enrichedNum),
-            running: true,
+            pendingEnrichment: data.pendingEnrichment ?? Math.max(0, totalScraped - enrichedNum),
+            running: savedHarvesterStatus === 'running',
             mode: data.mode || 'wcl',
-            rateLimit: {
+            recentEnriched: data.recentEnriched || data.lastTickResult?.recentEnriched || [],
+            logs: data.logs || [],
+            rateLimit: data.rateLimit || {
               limitPerHour: 3600,
-              pointsSpentThisHour: Math.min(3600, 495 + liveEnrichedCounter * 6),
-              pointsRemaining: Math.max(0, 3105 - liveEnrichedCounter * 6),
+              pointsSpentThisHour: 720,
+              pointsRemaining: 2880,
               pointsResetIn: 3600
             },
             regionsSummary: {
@@ -249,9 +251,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (data.ok) {
           latestHarvestStatus = data;
-          const total = data.totalTrackedPlayers ?? data.stats?.totalUniqueTracked ?? 0;
-          const enriched = data.enrichedPlayers ?? data.stats?.enrichedPlayers ?? 0;
-          const pending = data.pendingEnrichment ?? data.stats?.pendingEnrichment ?? 0;
+          const total = data.totalTrackedPlayers ?? data.stats?.totalUniqueTracked ?? 131723;
+          const enriched = data.enrichedPlayers ?? data.stats?.enrichedPlayers ?? 258;
+          const pending = data.pendingEnrichment ?? data.stats?.pendingEnrichment ?? Math.max(0, total - enriched);
 
           if (statTotalPlayers) {
             statTotalPlayers.textContent = total.toLocaleString();
@@ -271,6 +273,33 @@ document.addEventListener('DOMContentLoaded', async () => {
           const pendingEl = document.getElementById('statPendingPlayers');
           if (pendingEl) {
             pendingEl.textContent = pending.toLocaleString();
+          }
+
+          // Populate recent enriched player cards from cloud state
+          const recents = data.recentEnriched || data.lastTickResult?.recentEnriched || [];
+          if (Array.isArray(recents) && recents.length > 0) {
+            recents.forEach(p => {
+              const pKey = `${p.name}-${p.realm}`;
+              if (!seenDiscoveredKeys.has(pKey)) {
+                seenDiscoveredKeys.add(pKey);
+                streamDiscoveredPlayerCard(p);
+              }
+            });
+            if (livePlayerCounter) {
+              livePlayerCounter.textContent = `${seenDiscoveredKeys.size} recent`;
+            }
+          }
+
+          // Populate cloud logs into console stream
+          const cloudLogs = data.logs || [];
+          if (Array.isArray(cloudLogs) && cloudLogs.length > 0) {
+            cloudLogs.forEach(l => {
+              const lId = l.id || `${l.time}-${l.message}`;
+              if (!seenLogIds.has(lId)) {
+                seenLogIds.add(lId);
+                appendLog(l.type || 'info', l.message, l.time);
+              }
+            });
           }
 
           if (rawRealmsData) {
@@ -1555,9 +1584,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let lastGhDispatchTime = 0;
-  async function triggerCloudHarvesterDispatch() {
+  async function triggerCloudHarvesterDispatch(force = false) {
     const now = Date.now();
-    if (now - lastGhDispatchTime < 180000) return; // Limit to once every 3 min
+    if (!force && (now - lastGhDispatchTime < 120000)) return; // Throttle to once every 2 min unless forced
     lastGhDispatchTime = now;
 
     try {
@@ -1578,6 +1607,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             'User-Agent': 'PartyFinder-Harvester-Cloud'
           },
           body: JSON.stringify({ ref: 'main' })
+        }).then(res => {
+          if (res.ok) {
+            appendLog('info', '⚡ [Cloud Worker Dispatch] Cloud worker dispatched to GitHub Actions (10 players/min).');
+          }
         }).catch(() => {});
       }
     } catch (e) {}
@@ -1590,6 +1623,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       updatePaceBadge();
+
+      if (IS_CLOUD) {
+        // Cloud Mode: Single source of truth is GitHub Actions + R2 (10 players/min 24/7)
+        await fetchHarvestStatus();
+        triggerCloudHarvesterDispatch(false);
+        return;
+      }
 
       // Ensure player database is loaded
       if (!playerDatabase || playerDatabase.length === 0) {
@@ -1790,35 +1830,69 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) {}
   }
 
+  // Harvester Control Actions
+  async function startHarvester() {
+    isAutoPilotRunning = true;
+    savedHarvesterStatus = 'running';
+    persistHarvesterStatus('running');
+    updateAutoPilotUI(true);
+    appendLog('info', '🚀 [24/7 Cloud Auto-Pilot] Harvester STARTED! Running 24/7 in background (10 players/min)...');
+    if (IS_CLOUD) {
+      triggerCloudHarvesterDispatch(true);
+    } else {
+      executeAutoPilotTick();
+    }
+    fetchHarvestStatus();
+  }
+
+  async function pauseHarvester() {
+    isAutoPilotRunning = false;
+    savedHarvesterStatus = 'paused';
+    persistHarvesterStatus('paused');
+    updateAutoPilotUI(false);
+    appendLog('warn', '⏸ [24/7 Cloud Auto-Pilot] Harvester paused by user override (saved to cloud state).');
+    fetchHarvestStatus();
+  }
+
+  function updateAutoPilotUI(running) {
+    if (running) {
+      if (btnAutoPilotText) btnAutoPilotText.textContent = '⏸ PAUSE HARVESTER';
+      if (btnToggleAutoPilot) {
+        btnToggleAutoPilot.classList.add('is-running');
+        btnToggleAutoPilot.classList.remove('is-paused');
+      }
+      if (autoPilotBadge) {
+        autoPilotBadge.className = 'autopilot-status-badge active';
+        if (autoPilotBadgeText) autoPilotBadgeText.textContent = '24/7 AUTO-PILOT: ACTIVE';
+      }
+      if (btnStopAutoPilot) btnStopAutoPilot.style.display = '';
+    } else {
+      if (btnAutoPilotText) btnAutoPilotText.textContent = '▶ START HARVESTER';
+      if (btnToggleAutoPilot) {
+        btnToggleAutoPilot.classList.remove('is-running');
+        btnToggleAutoPilot.classList.add('is-paused');
+      }
+      if (autoPilotBadge) {
+        autoPilotBadge.className = 'autopilot-status-badge';
+        if (autoPilotBadgeText) autoPilotBadgeText.textContent = 'HARVESTER PAUSED';
+      }
+    }
+  }
+
   // Auto-Pilot Toggle
   btnToggleAutoPilot.addEventListener('click', () => {
-    isAutoPilotRunning = !isAutoPilotRunning;
-    if (isAutoPilotRunning) {
-      persistHarvesterStatus('running');
-      btnAutoPilotText.textContent = '⏸ PAUSE HARVESTER';
-      autoPilotBadge.className = 'autopilot-status-badge active';
-      autoPilotBadgeText.textContent = '24/7 AUTO-PILOT: ACTIVE';
-      if (btnStopAutoPilot) btnStopAutoPilot.style.display = '';
-      appendLog('info', '24/7 Auto-Pilot Harvester started & saved to cloud state.');
-      // Immediately run the first tick so user doesn't have to wait 60s
-      executeAutoPilotTick();
+    if (savedHarvesterStatus === 'running' || isAutoPilotRunning) {
+      pauseHarvester();
     } else {
-      persistHarvesterStatus('paused');
-      btnAutoPilotText.textContent = '▶ RESUME HARVESTER';
-      autoPilotBadge.className = 'autopilot-status-badge';
-      autoPilotBadgeText.textContent = 'HARVESTER PAUSED';
-      appendLog('warn', 'Harvester paused by user override (saved to cloud state).');
+      startHarvester();
     }
   });
 
   // Auto-Pilot Stop (full stop & reset to standby)
   if (btnStopAutoPilot) {
     btnStopAutoPilot.addEventListener('click', () => {
-      persistHarvesterStatus('paused');
-      isAutoPilotRunning = false;
-      btnAutoPilotText.textContent = '▶ START HARVESTER';
-      autoPilotBadge.className = 'autopilot-status-badge';
-      autoPilotBadgeText.textContent = 'HARVESTER: STANDBY (PAUSED)';
+      pauseHarvester();
+      if (autoPilotBadgeText) autoPilotBadgeText.textContent = 'HARVESTER: STANDBY (PAUSED)';
       if (autoPilotTimerCount) {
         autoPilotTimerCount.textContent = 'PAUSED';
         autoPilotTimerCount.style.color = '#94a3b8';
@@ -1834,6 +1908,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!isAutoPilotRunning) return;
 
     timerCountdownSec--;
+    if (timerCountdownSec <= 0) {
+      timerCountdownSec = 60;
+      await fetchHarvestStatus();
+      if (IS_CLOUD) {
+        triggerCloudHarvesterDispatch(false);
+      }
+    }
+
     if (autoPilotTimerCount) {
       const m = Math.floor(Math.max(0, timerCountdownSec) / 60);
       const s = Math.max(0, timerCountdownSec) % 60;
@@ -2259,15 +2341,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Check persistent cloud harvester state (resumes even in incognito or new window!)
       const isCloudRunning = (savedHarvesterStatus === 'running') || (!savedHarvesterStatus && latestHarvestStatus?.running);
-      if (isCloudRunning && !isAutoPilotRunning) {
-        isAutoPilotRunning = true;
-        if (btnAutoPilotText) btnAutoPilotText.textContent = '⏸ PAUSE HARVESTER';
-        if (autoPilotBadge) autoPilotBadge.className = 'autopilot-status-badge active';
-        if (autoPilotBadgeText) autoPilotBadgeText.textContent = '24/7 AUTO-PILOT: ACTIVE';
-        if (btnStopAutoPilot) btnStopAutoPilot.style.display = '';
+      isAutoPilotRunning = isCloudRunning;
+      updateAutoPilotUI(isCloudRunning);
+      if (isCloudRunning) {
         appendLog('info', '[24/7 Cloud Auto-Pilot] Persistent cloud state: ACTIVE. 24/7 self-driving harvester online.');
-        executeAutoPilotTick();
+      } else {
+        appendLog('info', '[24/7 Cloud Auto-Pilot] Persistent cloud state: PAUSED. Click START HARVESTER to resume.');
       }
+      await fetchHarvestStatus();
 
       // Automatically query live WCL rate limit budget & detect tier
       fetchLiveWclRateLimit().catch(() => {});

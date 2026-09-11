@@ -5,10 +5,14 @@ on:
     - cron: '*/5 * * * *'    # Every 5 minutes
   workflow_dispatch:          # Manual trigger for testing
 
+concurrency:
+  group: harvester-singleton
+  cancel-in-progress: false
+
 jobs:
   harvest:
     runs-on: ubuntu-latest
-    timeout-minutes: 4        # Kill if stuck (next run in 5 min)
+    timeout-minutes: 10
     
     steps:
       - name: Checkout code
