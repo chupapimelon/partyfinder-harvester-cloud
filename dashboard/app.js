@@ -348,19 +348,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const currentMode = activeManualMode || savedManualJobState?.mode || statusData?.activeJob?.mode || 'raiderio';
 
     // Total Tracked Players:
-    // In-memory playerDatabase.length is the live ground truth during sweeps.
-    // If a job is active or state was loaded, ensure it accurately reflects discovered players.
+    // Ground truth is the exact number of unique players in the database (from R2 statusTotal or loaded playerDatabase).
     let totalTracked = Math.max(dbTotal, statusTotal);
-    if (currentMode === 'raiderio' && activeCount > 0) {
-      totalTracked = Math.max(totalTracked, statusTotal + activeCount, dbTotal);
-    }
-    if (totalTracked <= 0) totalTracked = 200;
 
     // Combat Enriched Players:
     let enrichedCount = Math.max(dbEnriched, statusEnriched);
-    if (currentMode === 'wcl' && activeCount > 0) {
-      enrichedCount = Math.max(enrichedCount, statusEnriched + activeCount, dbEnriched);
-    }
 
     // Pending Enrichment Queue:
     // Exactly all discovered pushers not yet enriched with WCL combat parses
