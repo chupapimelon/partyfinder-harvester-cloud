@@ -3068,4 +3068,54 @@ input:checked + .toggle-slider:before {
   color: #fff;
 }
 
+/* --------------------------------------------------------------------------
+ * View-Only Real-Time Monitoring HUD Mode (?viewonly=true)
+ * -------------------------------------------------------------------------- */
+body.view-only-mode .action-deck {
+  display: none !important;
+}
 
+body.view-only-mode #btnToggleAutoPilot,
+body.view-only-mode #btnStopAutoPilot {
+  display: none !important;
+}
+
+body.view-only-mode #tabBtnSettings,
+body.view-only-mode #tab-settings {
+  display: none !important;
+}
+
+body.view-only-mode #btnLogout {
+  display: none !important;
+}
+
+.view-only-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(6, 182, 212, 0.12);
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  color: #38bdf8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  box-shadow: 0 0 14px rgba(6, 182, 212, 0.25);
+  user-select: none;
+}
+
+.view-only-badge .pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: pulseViewOnly 2s infinite ease-in-out;
+}
+
+@keyframes pulseViewOnly {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.5; }
+}

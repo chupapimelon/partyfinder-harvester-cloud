@@ -5,6 +5,17 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
   const IS_CLOUD = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+  const urlParams = new URLSearchParams(window.location.search);
+  const IS_VIEW_ONLY = urlParams.get('viewonly') === 'true' || urlParams.get('mode') === 'monitor' || window.__PF_VIEW_ONLY__ === true;
+
+  if (IS_VIEW_ONLY) {
+    document.body.classList.add('view-only-mode');
+    const viewOnlyBadge = document.getElementById('viewOnlyBadge');
+    if (viewOnlyBadge) viewOnlyBadge.style.display = 'inline-flex';
+    const loginSub = document.querySelector('.login-sub');
+    if (loginSub) loginSub.innerHTML = 'PartyFinder Live Telemetry Monitor &bull; <strong>View-Only HUD</strong>';
+  }
+
   const R2_BASE = 'https://r2.imongmama.online';
   let CURRENT_SEASON = 'season-mn-2';
   let CURRENT_SEASON_NAME = 'MN Season 2';
@@ -2289,6 +2300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Auto-Pilot Toggle
   btnToggleAutoPilot.addEventListener('click', () => {
+    if (IS_VIEW_ONLY) return;
     if (savedHarvesterStatus === 'running' || isAutoPilotRunning) {
       pauseHarvester();
     } else {
@@ -2299,6 +2311,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Auto-Pilot Stop (full stop & reset to standby)
   if (btnStopAutoPilot) {
     btnStopAutoPilot.addEventListener('click', () => {
+      if (IS_VIEW_ONLY) return;
       pauseHarvester();
       if (autoPilotBadgeText) autoPilotBadgeText.textContent = 'HARVESTER: STANDBY (PAUSED)';
       if (autoPilotTimerCount) {
@@ -2365,7 +2378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // PAUSE / RESUME button handler
   if (btnPauseJob) {
     btnPauseJob.addEventListener('click', async () => {
-      if (!isManualSweepActive) return;
+      if (IS_VIEW_ONLY || !isManualSweepActive) return;
       try {
         if (IS_CLOUD) {
           isManualSweepPaused = !isManualSweepPaused;
@@ -2422,7 +2435,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // STOP button handler
   btnStopJob.addEventListener('click', async () => {
-    if (!isManualSweepActive) return;
+    if (IS_VIEW_ONLY || !isManualSweepActive) return;
     isManualSweepActive = false;
     isManualSweepPaused = false;
     btnStopJob.disabled = true;
@@ -2632,7 +2645,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnStartJob.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (btnStartJob.disabled || isManualSweepActive) return;
+    if (IS_VIEW_ONLY || btnStartJob.disabled || isManualSweepActive) return;
 
     // Immediately lock button to prevent multiple clicks
     btnStartJob.disabled = true;
@@ -2752,7 +2765,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Deploy button
   btnSyncCloud.addEventListener('click', async () => {
-    if (btnSyncCloud.disabled) return;
+    if (IS_VIEW_ONLY || btnSyncCloud.disabled) return;
     btnSyncCloud.disabled = true;
 
     if (IS_CLOUD) {
@@ -3371,10 +3384,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (loginGateOverlay) loginGateOverlay.classList.add('hidden');
-    if (userSessionBar) userSessionBar.style.display = 'flex';
-    if (userEmailDisplay) userEmailDisplay.textContent = username;
+    if (IS_VIEW_ONLY) {
+      document.body.classList.add('view-only-mode');
+      const viewOnlyBadge = document.getElementById('viewOnlyBadge');
+      if (viewOnlyBadge) viewOnlyBadge.style.display = 'inline-flex';
+      if (userSessionBar) userSessionBar.style.display = 'none';
+      appendLog('success', `Live Monitor unlocked: Real-time telemetry HUD active.`);
+    } else {
+      if (userSessionBar) userSessionBar.style.display = 'flex';
+      if (userEmailDisplay) userEmailDisplay.textContent = username;
+      appendLog('success', `Studio unlocked: Authenticated as ${username}.`);
+    }
 
-    appendLog('success', `Studio unlocked: Authenticated as ${username}.`);
     loadSecretsFromSupabase();
   }
 
@@ -3389,8 +3410,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const data = JSON.parse(raw);
         if (data.user) {
           if (loginGateOverlay) loginGateOverlay.classList.add('hidden');
-          if (userSessionBar) userSessionBar.style.display = 'flex';
-          if (userEmailDisplay) userEmailDisplay.textContent = data.user;
+          if (IS_VIEW_ONLY) {
+            document.body.classList.add('view-only-mode');
+            const viewOnlyBadge = document.getElementById('viewOnlyBadge');
+            if (viewOnlyBadge) viewOnlyBadge.style.display = 'inline-flex';
+            if (userSessionBar) userSessionBar.style.display = 'none';
+          } else {
+            if (userSessionBar) userSessionBar.style.display = 'flex';
+            if (userEmailDisplay) userEmailDisplay.textContent = data.user;
+          }
           return true;
         }
       } catch (e) {
