@@ -2030,11 +2030,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Dynamic Auto-Scale based on detected hourly limit:
-    // 3,600 pts/hr (Free)      -> 10 players/min
-    // 9,000 pts/hr (Gold)      -> 25 players/min
-    // 18,000 pts/hr (Platinum) -> 50 players/min
-    const optimal = Math.floor((limit / 60) / 6);
-    return Math.max(5, Math.min(50, optimal));
+    // 3,600 pts/hr (Free)       -> 10 players/min
+    // 9,000 pts/hr (Gold)       -> 30 players/min
+    // 18,000 pts/hr (Platinum)  -> 100 players/min (500 per tick)
+    if (limit >= 18000) return 100;
+    if (limit >= 9000) return 30;
+    return 10;
   }
 
   function updatePaceBadge() {
