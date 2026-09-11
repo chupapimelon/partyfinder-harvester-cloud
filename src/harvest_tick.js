@@ -13,7 +13,7 @@ const r2 = require('./r2_client');
 const sb = require('./supabase_client');
 const { scanRaiderIoPages } = require('./raiderio_scraper');
 const { detectCurrentSeason, getCurrentSeason, getCurrentLevelCap } = require('./season_detector');
-const { enrichBatch } = require('./wcl_enricher');
+const { enrichBatch, checkLiveRateLimit } = require('./wcl_enricher');
 const { generateAndUploadPages, uploadStatusOnly } = require('./page_generator');
 
 // WCL credentials — from GitHub Secrets env vars or Supabase vault
@@ -127,15 +127,31 @@ async function main() {
       }
     } catch (e) {}
 
-    // 4. 24/7 Autonomous Cycle Engine: 5 micro-cycles of 10 players each (10 players/min pace = 600/hr)
-    const TOTAL_CYCLES = 5;
-    const CYCLE_BATCH_SIZE = 10;
+    // 4. Dynamic Adaptive Pacing Engine: Auto-detects WCL tier (Platinum vs Free)
+    const hasWclCreds = !!(wclClientId && wclClientSecret);
+    let liveRateLimit = null;
+    if (hasWclCreds) {
+      liveRateLimit = await checkLiveRateLimit(wclClientId, wclClientSecret);
+    }
+    const detectedLimit = liveRateLimit?.limitPerHour || 3600;
+    const isPlatinum = detectedLimit >= 18000;
+
+    // Adaptive parameters:
+    // Platinum (18k pts/hr): 10 micro-cycles of 50 players each (500 players per tick = ~6,000-7,200/hr) with 2s wait
+    // Free/Standard (3.6k pts/hr): 5 micro-cycles of 10 players each (50 players per tick = ~600/hr) with 48s wait
+    const TOTAL_CYCLES = isPlatinum ? 10 : 5;
+    const CYCLE_BATCH_SIZE = isPlatinum ? 50 : 10;
+    const CYCLE_WAIT_MS = isPlatinum ? 2000 : 48000;
+    const tierName = isPlatinum ? 'PLATINUM TURBO (18k pts/hr)' : 'FREE / STANDARD SAFE (3.6k pts/hr)';
+
+    console.log(`[Pacing Engine] Active Tier: ${tierName} | Limit: ${detectedLimit.toLocaleString()} pts/hr | Batch: ${CYCLE_BATCH_SIZE} | Wait: ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s`);
+    logs.push(makeLog('info', `[Pacing Engine] Live Tier: ${tierName} (${detectedLimit.toLocaleString()} pts/hr) -> Target batch: ${CYCLE_BATCH_SIZE} players/cycle.`));
+
     let accumulatedEnrichedThisTick = 0;
     let accumulatedNewThisTick = 0;
     let allRecentEnriched = [];
     let allRecentDiscovered = [];
     let lastTickResult = {};
-    const hasWclCreds = !!(wclClientId && wclClientSecret);
 
     for (let cycle = 0; cycle < TOTAL_CYCLES; cycle++) {
       // Responsively check if user paused or stopped from dashboard
@@ -169,8 +185,8 @@ async function main() {
       const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds ? 'wcl' : 'raiderio');
 
       if (targetMode === 'wcl' && curPending > 0 && hasWclCreds) {
-        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (10/min)...`);
-        logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching 10 players...`));
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (${isPlatinum ? 'Turbo' : 'Safe 10/min'})...`);
+        logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching ${CYCLE_BATCH_SIZE} players...`));
 
         const result = await enrichBatch(registry, {
           region,
@@ -178,6 +194,7 @@ async function main() {
           zoneId: config.wclZoneId || 55,
           clientId: wclClientId,
           clientSecret: wclClientSecret,
+          fastMode: isPlatinum,
         });
 
         if (result.enrichedCount > 0) {
@@ -348,11 +365,20 @@ async function main() {
         await sb.setState('progress', progress);
       } catch (e) {}
 
-      // Wait between micro-cycles: WCL needs 48s for 10/min rate limit; Raider.IO takes 2s
+      // Wait between micro-cycles: Dynamic adaptive pacing
       if (cycle < TOTAL_CYCLES - 1) {
         if (targetMode === 'wcl') {
-          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting 48s for next 10/min batch...`);
-          await new Promise(r => setTimeout(r, 48000));
+          // Dynamic safety ceiling check: back off if approaching limit
+          const currentSpent = lastTickResult.rateLimit?.pointsSpentThisHour || 0;
+          const currentLimit = lastTickResult.rateLimit?.limitPerHour || detectedLimit;
+          if (currentSpent > (currentLimit - 400)) {
+            const resetIn = lastTickResult.rateLimit?.pointsResetIn || 60;
+            console.warn(`[WCL Guard] Approaching hourly ceiling (${currentSpent}/${currentLimit}). Pausing for ${resetIn}s.`);
+            logs.push(makeLog('warn', `[WCL Guard] Approaching hourly ceiling (${currentSpent}/${currentLimit}). Pausing for reset.`));
+            break;
+          }
+          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s for next batch...`);
+          await new Promise(r => setTimeout(r, CYCLE_WAIT_MS));
         } else {
           console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Discovery batch complete. Next batch in 2s...`);
           await new Promise(r => setTimeout(r, 2000));

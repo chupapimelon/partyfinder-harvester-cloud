@@ -41,14 +41,41 @@ async function getWclAccessToken(clientId, clientSecret) {
 }
 
 /**
+ * Check live rate limit state for an API client
+ * @param {string} clientId
+ * @param {string} clientSecret
+ * @returns {Promise<{ limitPerHour: number, pointsSpentThisHour: number, pointsResetIn: number } | null>}
+ */
+async function checkLiveRateLimit(clientId, clientSecret) {
+  try {
+    const token = await getWclAccessToken(clientId, clientSecret);
+    const query = '{ rateLimitData { limitPerHour pointsSpentThisHour pointsResetIn } }';
+    const res = await fetch('https://www.warcraftlogs.com/api/v2/client', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return null;
+    const qData = await res.json();
+    return qData.data?.rateLimitData || null;
+  } catch (err) {
+    console.warn('[WCL] Failed to check live rate limit:', err.message);
+    return null;
+  }
+}
+
+/**
  * Enrich a batch of un-enriched players with WCL combat parse data
  * @param {object} registry — Player registry object (from R2, modified in-place)
- * @param {object} options — { region, batchSize, zoneId, clientId, clientSecret }
+ * @param {object} options — { region, batchSize, zoneId, clientId, clientSecret, fastMode }
  * @returns {{ enrichedCount, remainingInQueue, enrichedPlayers }}
  */
 async function enrichBatch(registry, options = {}) {
   const region = (options.region || 'us').toLowerCase();
-  const batchSize = Math.min(parseInt(options.batchSize, 10) || 10, 50);
+  const batchSize = Math.min(parseInt(options.batchSize, 10) || 10, 100);
   const zoneId = options.zoneId || 55;
 
   const unEnriched = Object.values(registry.players)
@@ -164,8 +191,9 @@ async function enrichBatch(registry, options = {}) {
       registry.players[playerKey] = player;
       enrichedResults.push(player);
 
-      // 100ms pause between requests
-      await new Promise(r => setTimeout(r, 100));
+      // Dynamic polite pause: 35ms in fast/platinum mode, 100ms in standard mode
+      const pauseMs = options.fastMode ? 35 : 100;
+      await new Promise(r => setTimeout(r, pauseMs));
     } catch (err) {
       console.error(`[WCL] Error enriching ${playerKey}:`, err.message);
     }
@@ -182,4 +210,5 @@ async function enrichBatch(registry, options = {}) {
 module.exports = {
   enrichBatch,
   getWclAccessToken,
+  checkLiveRateLimit,
 };
