@@ -1533,6 +1533,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     return cachedWclAccessToken;
   }
 
+  // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct)
+  async function fetchRaiderIoRankings(region, page) {
+    const rioPath = `mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${page}`;
+    const directUrl = `https://raider.io/api/${rioPath}`;
+    let res = null;
+    let lastErr = null;
+
+    // 1. Try local or current-origin proxy endpoint
+    try {
+      res = await fetch(`/api/raiderio/${rioPath}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    // 2. Try the production Cloudflare Pages proxy on harvester.imongmama.online (has CORS: *)
+    try {
+      res = await fetch(`https://harvester.imongmama.online/api/raiderio/${rioPath}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    // 3. Try direct fetch (works if running in Node/Electron or CORS-permissive environment)
+    try {
+      res = await fetch(directUrl);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    throw new Error(`Failed to fetch Raider.IO rankings (${res ? res.status : (lastErr ? lastErr.message : 'Network error')})`);
+  }
+  if (typeof window !== 'undefined') {
+    window.fetchRaiderIoRankings = fetchRaiderIoRankings;
+  }
+
   async function enrichSinglePlayerWithWcl(player, token, zoneId = 55) {
     const cleanSlug = cleanRealmSlug(player.realmSlug || player.realm || '');
     const metric = player.role === 'Tank' ? 'playerspeed' : (player.role === 'Healer' ? 'hps' : 'dps');
@@ -1756,49 +1802,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             triggerCloudHarvesterDispatch();
           }
         }
-  // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct)
-  async function fetchRaiderIoRankings(region, page) {
-    const rioPath = `mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${page}`;
-    const directUrl = `https://raider.io/api/${rioPath}`;
-    let res = null;
-    let lastErr = null;
-
-    // 1. Try local or current-origin proxy endpoint
-    try {
-      res = await fetch(`/api/raiderio/${rioPath}`);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-
-    // 2. Try the production Cloudflare Pages proxy on harvester.imongmama.online (has CORS: *)
-    try {
-      res = await fetch(`https://harvester.imongmama.online/api/raiderio/${rioPath}`);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-
-    // 3. Try direct fetch (works if running in Node/Electron or CORS-permissive environment)
-    try {
-      res = await fetch(directUrl);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data && (data.rankings || Array.isArray(data))) return data;
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-
-    throw new Error(`Failed to fetch Raider.IO rankings (${res ? res.status : (lastErr ? lastErr.message : 'Network error')})`);
-  }
-
       } else {
         // DISCOVERY MODE: All current players enriched -> Scrape new pushers from Raider.IO leaderboards
         appendLog('info', `[24/7 Auto-Pilot] All current pushers enriched! Scanning Raider.IO Mythic+ leaderboards for new pushers...`);
