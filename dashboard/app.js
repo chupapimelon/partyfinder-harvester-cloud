@@ -1756,6 +1756,49 @@ document.addEventListener('DOMContentLoaded', async () => {
             triggerCloudHarvesterDispatch();
           }
         }
+  // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct)
+  async function fetchRaiderIoRankings(region, page) {
+    const rioPath = `mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${page}`;
+    const directUrl = `https://raider.io/api/${rioPath}`;
+    let res = null;
+    let lastErr = null;
+
+    // 1. Try local or current-origin proxy endpoint
+    try {
+      res = await fetch(`/api/raiderio/${rioPath}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    // 2. Try the production Cloudflare Pages proxy on harvester.imongmama.online (has CORS: *)
+    try {
+      res = await fetch(`https://harvester.imongmama.online/api/raiderio/${rioPath}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    // 3. Try direct fetch (works if running in Node/Electron or CORS-permissive environment)
+    try {
+      res = await fetch(directUrl);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && (data.rankings || Array.isArray(data))) return data;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+
+    throw new Error(`Failed to fetch Raider.IO rankings (${res ? res.status : (lastErr ? lastErr.message : 'Network error')})`);
+  }
+
       } else {
         // DISCOVERY MODE: All current players enriched -> Scrape new pushers from Raider.IO leaderboards
         appendLog('info', `[24/7 Auto-Pilot] All current pushers enriched! Scanning Raider.IO Mythic+ leaderboards for new pushers...`);
@@ -1764,11 +1807,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           const page = cloudCrawlerPage;
           cloudCrawlerPage = (cloudCrawlerPage + 1) % 50;
 
-          const rioUrl = `https://raider.io/api/mythic-plus/rankings/characters?region=${reg}&season=season-tww-2&class=all&role=all&page=${page}`;
-          const rioRes = await fetch(rioUrl);
-          if (rioRes.ok) {
-            const rioData = await rioRes.json();
-            const rankings = rioData.rankings?.ranking?.records || rioData.rankings || [];
+          const rioData = await fetchRaiderIoRankings(reg, page);
+          if (rioData) {
+            const rankings = rioData.rankings?.rankedCharacters || rioData.rankings?.ranking?.records || (Array.isArray(rioData.rankings) ? rioData.rankings : []);
             let addedCount = 0;
 
             rankings.forEach(item => {
@@ -1784,11 +1825,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 class: c.class?.name || 'Warrior',
                 spec: c.spec?.name || 'Arms',
                 role,
-                rioScore: item.score || c.score || 3500,
+                rioScore: Math.round((item.score || c.score || 3500) * 10) / 10,
                 median: 0,
                 metric,
-                dungeons: 8,
-                runs: 1,
+                dungeons: Array.isArray(item.runs) ? item.runs.length : 8,
+                runs: Array.isArray(item.runs) ? item.runs.length : 1,
                 enriched: false,
                 unlogged: false,
                 lastSync: 'Queued'
@@ -2110,49 +2151,59 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         } else {
           // Raider.IO sweep using authentic characters rankings endpoint
-          const url = `https://raider.io/api/mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${cloudSweepPage}`;
+          const currentPage = cloudSweepPage;
           cloudSweepPage = (cloudSweepPage + 1) % 50;
-          const res = await fetch(url);
-          if (res.ok) {
-            const data = await res.json();
-            const rankings = data.rankings?.ranking?.records || data.rankings || [];
-            let newChars = 0;
-            rankings.forEach(item => {
-              const c = item.character || item;
-              if (!c || !c.name) return;
-              const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
-              const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
-              const pObj = {
-                name: c.name,
-                realm: c.realm?.name || 'Area 52',
-                realmSlug: cleanRealmSlug(c.realm?.slug || c.realm?.name),
-                region: region.toUpperCase(),
-                class: c.class?.name || 'Warrior',
-                spec: c.spec?.name || 'Arms',
-                role,
-                rioScore: item.score || c.score || 3500,
-                median: 0,
-                metric,
-                dungeons: 8,
-                runs: 1,
-                enriched: false,
-                unlogged: false,
-                lastSync: 'Queued'
-              };
 
-              const exists = playerDatabase.some(p => p.name.toLowerCase() === pObj.name.toLowerCase() && p.realm.toLowerCase() === pObj.realm.toLowerCase());
-              if (!exists) {
-                playerDatabase.unshift(pObj);
-                newChars++;
-                streamDiscoveredPlayerCard(pObj);
-              }
-            });
+          const data = await fetchRaiderIoRankings(region, currentPage);
+          const rankings = data.rankings?.rankedCharacters || data.rankings?.ranking?.records || (Array.isArray(data.rankings) ? data.rankings : []);
+          let newChars = 0;
+          rankings.forEach(item => {
+            const c = item.character || item;
+            if (!c || !c.name) return;
+            const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
+            const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
+            const pObj = {
+              name: c.name,
+              realm: c.realm?.name || 'Area 52',
+              realmSlug: cleanRealmSlug(c.realm?.slug || c.realm?.name),
+              region: region.toUpperCase(),
+              class: c.class?.name || 'Warrior',
+              spec: c.spec?.name || 'Arms',
+              role,
+              rioScore: Math.round((item.score || c.score || 3500) * 10) / 10,
+              median: 0,
+              metric,
+              dungeons: Array.isArray(item.runs) ? item.runs.length : 8,
+              runs: Array.isArray(item.runs) ? item.runs.length : 1,
+              enriched: false,
+              unlogged: false,
+              lastSync: 'Queued'
+            };
 
-            const startRank = (cloudSweepPage * 20) + 1;
-            const endRank = (cloudSweepPage + 1) * 20;
-            liveEnrichedCounter += newChars;
-            if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-            appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${cloudSweepPage}): +${newChars} newly added. Database: ${playerDatabase.length.toLocaleString()} players.`);
+            const exists = playerDatabase.some(p => p.name.toLowerCase() === pObj.name.toLowerCase() && p.realm.toLowerCase() === pObj.realm.toLowerCase());
+            if (!exists) {
+              playerDatabase.unshift(pObj);
+              newChars++;
+              streamDiscoveredPlayerCard(pObj);
+            }
+          });
+
+          const startRank = (currentPage * 100) + 1;
+          const endRank = (currentPage + 1) * 100;
+          liveEnrichedCounter += newChars;
+          if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+          appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added. Database: ${playerDatabase.length.toLocaleString()} players.`);
+
+          if (newChars > 0) {
+            const total = playerDatabase.length;
+            const pending = playerDatabase.filter(p => !p.enriched).length;
+            const enriched = total - pending;
+            if (statTotalPlayers) statTotalPlayers.textContent = total.toLocaleString();
+            if (statPendingPlayers) statPendingPlayers.textContent = pending.toLocaleString();
+            if (statEnrichedPlayers) statEnrichedPlayers.textContent = enriched.toLocaleString();
+            const pct = total > 0 ? ((enriched / total) * 100).toFixed(1) : '0.0';
+            if (statEnrichProgress) statEnrichProgress.style.width = `${pct}%`;
+            if (statEnrichPercent) statEnrichPercent.textContent = `${pct}% ENRICHED`;
           }
         }
       } catch (err) {
