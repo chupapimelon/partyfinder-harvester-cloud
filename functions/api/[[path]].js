@@ -84,8 +84,11 @@ export async function onRequest(context) {
     const headers = new Headers(res.headers);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', '*');
-    headers.set('Cache-Control', 'public, max-age=60');
+    if (targetPath.includes('status.json') || targetPath.includes('status')) {
+      headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    } else {
+      headers.set('Cache-Control', 'public, max-age=60');
+    }
 
     return new Response(body, {
       status: res.status,

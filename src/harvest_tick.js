@@ -133,6 +133,7 @@ async function main() {
     let accumulatedEnrichedThisTick = 0;
     let accumulatedNewThisTick = 0;
     let allRecentEnriched = [];
+    let allRecentDiscovered = [];
     let lastTickResult = {};
     const hasWclCreds = !!(wclClientId && wclClientSecret);
 
@@ -188,16 +189,32 @@ async function main() {
             logs.push(makeLog('info', `  ✓ ${p.name}-${p.realm} (${p.rioScore} R.IO) → ${parseStr}`));
           }
 
-          if (isManualActive) {
-            manualJob.countThisRun = (manualJob.countThisRun || 0) + result.enrichedCount;
-            try {
-              await sb.getClient().from('app_secrets').upsert({
-                key: 'manual_job_state',
-                value: JSON.stringify(manualJob)
-              }, { onConflict: 'key' });
-            } catch (err) {
-              console.warn('[Manual State] Failed to persist state:', err.message);
-            }
+          const cloudWclSync = {
+            ...(manualJob || {}),
+            running: true,
+            paused: false,
+            mode: 'wcl',
+            region,
+            countThisRun: ((manualJob && manualJob.countThisRun) || 0) + result.enrichedCount,
+            recentLogs: logs.slice(-30),
+            recentEnriched: allRecentEnriched.slice(-20),
+            totalTracked: curTotal,
+            lastHeartbeat: Date.now()
+          };
+          if (manualJob && manualJob.running) {
+            manualJob.countThisRun = cloudWclSync.countThisRun;
+            manualJob.recentLogs = cloudWclSync.recentLogs;
+            manualJob.recentEnriched = cloudWclSync.recentEnriched;
+            manualJob.totalTracked = cloudWclSync.totalTracked;
+            manualJob.lastHeartbeat = cloudWclSync.lastHeartbeat;
+          }
+          try {
+            await sb.getClient().from('app_secrets').upsert({
+              key: 'manual_job_state',
+              value: JSON.stringify(manualJob && manualJob.running ? manualJob : cloudWclSync)
+            }, { onConflict: 'key' });
+          } catch (err) {
+            console.warn('[Manual State] Failed to persist state:', err.message);
           }
         }
 
@@ -213,23 +230,67 @@ async function main() {
         console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Scanning Raider.IO leaderboards (Season: ${seasonInfo.slug}, Cap: ${seasonInfo.levelCap})...`);
         const result = await scanRaiderIoPages(registry, {
           region,
-          pageCount: 2,
+          pageCount: 5,
           season: seasonInfo.slug,
           levelCap: seasonInfo.levelCap,
         });
 
         const newFound = result.newPlayersCount || 0;
         accumulatedNewThisTick += newFound;
-        if (isManualActive) {
-          manualJob.countThisRun = (manualJob.countThisRun || 0) + newFound;
-          try {
-            await sb.getClient().from('app_secrets').upsert({
-              key: 'manual_job_state',
-              value: JSON.stringify(manualJob)
-            }, { onConflict: 'key' });
-          } catch (err) {
-            console.warn('[Manual State] Failed to persist state:', err.message);
-          }
+        const totalInReg = Object.keys(registry.players).length;
+        const startRank = (result.lastScannedPage * 100) + 1;
+        const endRank = (result.nextPage || (result.lastScannedPage + 5)) * 100;
+
+        if (newFound > 0) {
+          logs.push(makeLog('success', `[Raider.IO] Cloud worker scanned ranks #${startRank}-#${endRank} (Pages ${result.lastScannedPage}-${(result.nextPage || result.lastScannedPage + 1) - 1}): +${newFound} newly added. Database: ${totalInReg.toLocaleString()} players.`));
+        } else {
+          logs.push(makeLog('info', `[Raider.IO] Cloud worker scanned ranks #${startRank}-#${endRank} (Pages ${result.lastScannedPage}-${(result.nextPage || result.lastScannedPage + 1) - 1}): Verified ${result.charactersProcessed || 500} characters (all ${totalInReg.toLocaleString()} pushers already tracked in database).`));
+        }
+
+        const tickDiscovered = (result.discovered || []).map(p => ({
+          name: p.name,
+          realm: p.realm,
+          realmSlug: p.realmSlug,
+          class: p.class,
+          spec: p.spec,
+          role: p.role,
+          rioScore: p.rioScore,
+          median: 0,
+          metric: p.metric || (p.role === 'Tank' ? 'SPEED' : (p.role === 'Healer' ? 'HPS' : 'DPS')),
+          enriched: false,
+          unlogged: false,
+          time: Date.now()
+        }));
+        allRecentDiscovered = [...tickDiscovered, ...allRecentDiscovered].slice(0, 30);
+
+        const cloudSyncState = {
+          ...(manualJob || {}),
+          running: true,
+          paused: false,
+          mode: 'raiderio',
+          region,
+          countThisRun: ((manualJob && manualJob.countThisRun) || 0) + newFound,
+          page: result.nextPage,
+          recentLogs: logs.slice(-30),
+          recentDiscovered: allRecentDiscovered.slice(-20),
+          totalTracked: totalInReg,
+          lastHeartbeat: Date.now()
+        };
+        if (manualJob && manualJob.running) {
+          manualJob.countThisRun = cloudSyncState.countThisRun;
+          manualJob.page = cloudSyncState.page;
+          manualJob.recentLogs = cloudSyncState.recentLogs;
+          manualJob.recentDiscovered = cloudSyncState.recentDiscovered;
+          manualJob.totalTracked = cloudSyncState.totalTracked;
+          manualJob.lastHeartbeat = cloudSyncState.lastHeartbeat;
+        }
+        try {
+          await sb.getClient().from('app_secrets').upsert({
+            key: 'manual_job_state',
+            value: JSON.stringify(manualJob && manualJob.running ? manualJob : cloudSyncState)
+          }, { onConflict: 'key' });
+        } catch (err) {
+          console.warn('[Manual State] Failed to persist state:', err.message);
         }
 
         lastTickResult = {
@@ -252,16 +313,20 @@ async function main() {
         lastTickAt: new Date().toISOString(),
         lastTickResult: lastTickResult,
         recentEnriched: allRecentEnriched,
+        recentDiscovered: allRecentDiscovered,
+        lastScannedPage: registry.lastScannedPage || 0,
+        totalPlayers: Object.keys(registry.players).length,
         rateLimit: lastTickResult.rateLimit || null,
-        logs: logs.slice(-25),
+        logs: logs.slice(-30),
         running: true,
         paused: false,
         activeJob: manualJob && manualJob.running ? manualJob : {
-          running: false,
+          running: true,
           paused: false,
-          mode: 'raiderio',
+          mode: lastTickResult.mode || 'raiderio',
           region,
-          countThisRun: 0
+          countThisRun: accumulatedNewThisTick,
+          page: registry.lastScannedPage || 0
         }
       };
       await uploadStatusOnly(registry, region, statusData);
@@ -280,10 +345,15 @@ async function main() {
         await sb.setState('progress', progress);
       } catch (e) {}
 
-      // Wait ~48s for next 1-minute cycle (total cycle ~50-55s = 10 players/minute)
+      // Wait between micro-cycles: WCL needs 48s for 10/min rate limit; Raider.IO takes 2s
       if (cycle < TOTAL_CYCLES - 1) {
-        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting 48s for next 10/min batch...`);
-        await new Promise(r => setTimeout(r, 48000));
+        if (targetMode === 'wcl') {
+          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting 48s for next 10/min batch...`);
+          await new Promise(r => setTimeout(r, 48000));
+        } else {
+          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Discovery batch complete. Next batch in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
     }
 
@@ -294,16 +364,20 @@ async function main() {
       lastTickAt: new Date().toISOString(),
       lastTickResult: lastTickResult,
       recentEnriched: allRecentEnriched,
+      recentDiscovered: allRecentDiscovered,
+      lastScannedPage: registry.lastScannedPage || 0,
+      totalPlayers: Object.keys(registry.players).length,
       rateLimit: lastTickResult.rateLimit || null,
-      logs: logs.slice(-25),
+      logs: logs.slice(-30),
       running: true,
       paused: false,
       activeJob: manualJob && manualJob.running ? manualJob : {
-        running: false,
+        running: true,
         paused: false,
-        mode: 'raiderio',
+        mode: lastTickResult.mode || 'raiderio',
         region,
-        countThisRun: 0
+        countThisRun: accumulatedNewThisTick,
+        page: registry.lastScannedPage || 0
       }
     };
     await generateAndUploadPages(registry, region, finalStatus);

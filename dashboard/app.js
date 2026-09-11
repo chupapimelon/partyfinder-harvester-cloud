@@ -725,6 +725,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
           }
 
+          // Populate recent discovered player cards from 24/7 cloud worker
+          const discovered = data.recentDiscovered || data.lastTickResult?.recentDiscovered || [];
+          if (Array.isArray(discovered) && discovered.length > 0) {
+            discovered.forEach(p => {
+              const pKey = `${p.name}-${p.realm}`;
+              if (!seenDiscoveredKeys.has(pKey)) {
+                seenDiscoveredKeys.add(pKey);
+                streamDiscoveredPlayerCard(p);
+              }
+            });
+          }
+
           // Populate cloud logs into console stream
           const cloudLogs = data.logs || [];
           if (Array.isArray(cloudLogs) && cloudLogs.length > 0) {
@@ -798,10 +810,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
               btnStopJob.disabled = false;
 
-              // If opening tab while sweep is running in cloud, resume runner on active control client only
-              if (IS_CLOUD && !IS_VIEW_ONLY && !cloudSweepRunning && !aj.paused && aj.running) {
-                runCloudManualSweep(activeManualMode, aj.region || currentActiveRegion || 'us');
-              }
+              // Cloud worker runs 24/7 on GitHub Actions. Browser only monitors telemetry.
             } else if (isManualSweepActive && (!aj || !aj.running)) {
               // Active job stopped or completed
               isManualSweepActive = false;
@@ -2626,11 +2635,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             btnPauseJob.classList.remove('is-paused');
             if (txtPauseJob) txtPauseJob.textContent = 'PAUSE';
             if (iconPauseJob) iconPauseJob.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
-            appendLog('info', '[Job Control] Sweep RESUMED.');
+            appendLog('info', '[Job Control] Sweep RESUMED. Dispatched 24/7 cloud worker on GitHub Actions.');
             triggerCloudHarvesterDispatch(true);
-            if (!cloudSweepRunning) {
-              runCloudManualSweep(activeManualMode, currentActiveRegion || 'us');
-            }
           }
           return;
         }
@@ -2978,8 +2984,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       await persistHarvesterStatus('running');
       triggerCloudHarvesterDispatch(true);
 
-      appendLog('info', `[Cloud Engine] Initiating persistent live ${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'} starting at Page ${startPage} (Ranks #${(startPage * 100) + 1}+) for [${region.toUpperCase()}] pushers... (Persists across tab close & incognito)`);
-      runCloudManualSweep(activeManualMode, region);
+      appendLog('info', `[24/7 Cloud Harvester] Dispatched autonomous cloud worker on GitHub Actions (${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'}, starting at Page ${startPage}). Running 24/7 on GitHub servers (PC and browser can safely close anytime).`);
       return;
     }
 
