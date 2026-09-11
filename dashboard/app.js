@@ -1180,7 +1180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       let statusBadge = `<span class="badge badge-soft-info">⏳ Standby</span>`;
       if (isTarget) {
-        const isRunning = isScraping || (latestHarvestStatus?.activeJob?.status === 'running') || isManualSweepActive;
+        const isRunning = isAutoPilotRunning || isManualSweepActive || !!(latestHarvestStatus?.activeJob?.running) || (latestHarvestStatus?.activeJob?.status === 'running') || !!(latestHarvestStatus?.running);
         statusBadge = isRunning 
           ? `<span class="badge badge-emerald">⚡ Harvesting Active</span>`
           : `<span class="badge badge-emerald">👑 Active Target (Standby)</span>`;
