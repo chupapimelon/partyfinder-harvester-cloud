@@ -3212,7 +3212,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let wclResetTimerInterval = null;
 
   function updateWclRateLimitUI(rlData) {
-    if (!rlData || !rlData.ok) return;
+    if (!rlData) return;
     currentWclRateLimit = rlData;
 
     const limit = rlData.limitPerHour || 3600;
@@ -3220,13 +3220,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const remaining = Math.max(0, limit - spent);
     const resetIn = rlData.pointsResetIn || 3600;
     const isUpgraded = rlData.isUpgraded || limit > 3600;
+    const tierName = limit >= 18000 ? 'Platinum' : (limit >= 9000 ? 'Gold' : 'Standard');
 
     // 1. Update Bottom Status Bar Pill
     if (wclQuotaText) {
-      wclQuotaText.textContent = `${remaining.toLocaleString()} / ${limit.toLocaleString()} pts`;
+      wclQuotaText.textContent = `${Math.round(remaining).toLocaleString()} / ${limit.toLocaleString()} pts`;
     }
     if (wclRatePill) {
-      wclRatePill.title = `Hourly Warcraft Logs API Budget: ${limit.toLocaleString()} pts/hr (${rlData.tier}) • ${remaining.toLocaleString()} remaining • Reset in ${Math.round(resetIn / 60)}m`;
+      wclRatePill.title = `Hourly Warcraft Logs API Budget: ${limit.toLocaleString()} pts/hr (${tierName}) • ${Math.round(remaining).toLocaleString()} remaining • Reset in ${Math.round(resetIn / 60)}m`;
     }
 
     // 2. Update Control Deck Card 4 (Hourly WCL Budget)
@@ -3319,6 +3320,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (res && res.ok) {
         const data = await res.json();
         if (data.ok) {
+          if (currentWclRateLimit && currentWclRateLimit.limitPerHour > data.limitPerHour) {
+            return currentWclRateLimit;
+          }
           updateWclRateLimitUI(data);
           return data;
         }
