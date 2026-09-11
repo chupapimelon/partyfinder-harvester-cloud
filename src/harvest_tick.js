@@ -55,6 +55,34 @@ async function main() {
     const pendingBefore = totalBefore - enrichedBefore;
     console.log(`[R2] Loaded: ${totalBefore} players (${enrichedBefore} enriched, ${pendingBefore} pending)`);
 
+    // Check if Clean Slate Reset was requested
+    try {
+      const resetReq = await sb.getState('reset_requested');
+      if (resetReq && resetReq.enabled) {
+        console.log('[Cloud Tick] Clean Slate Reset requested! Wiping R2 registry and restarting from Page 0...');
+        logs.push(makeLog('warn', `[Clean Slate Reset] Purged ${totalBefore.toLocaleString()} players from R2. Re-crawling from Page 0 under ${seasonInfo.slug} (Level Cap: ${seasonInfo.levelCap})!`));
+        registry.players = {};
+        registry.lastScannedPage = 0;
+        registry.totalUnique = 0;
+        registry.season = seasonInfo.slug;
+        registry.levelCap = seasonInfo.levelCap;
+        await r2.savePlayerRegistry(region, registry);
+        await sb.setState('reset_requested', { enabled: false, wipedAt: new Date().toISOString() });
+        await sb.setState('progress', {
+          totalUnique: 0,
+          enrichedCount: 0,
+          pendingEnrichment: 0,
+          percentEnriched: '0.0',
+          lastScannedPage: 0,
+          season: seasonInfo.slug,
+          levelCap: seasonInfo.levelCap,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    } catch (resetErr) {
+      console.warn('[Cloud Tick] Reset check notice:', resetErr.message);
+    }
+
     // 3. Get WCL credentials
     let wclClientId = WCL_CLIENT_ID;
     let wclClientSecret = WCL_CLIENT_SECRET;
