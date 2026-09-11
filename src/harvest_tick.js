@@ -60,18 +60,29 @@ async function main() {
       }
     }
 
+    // Check if user paused the harvester from dashboard
+    try {
+      const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
+      const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
+      if (statusEntry && statusEntry.value === 'paused') {
+        console.log('[Cloud Tick] Harvester is paused by user override. Standing by.');
+        return;
+      }
+    } catch (e) {}
+
     // 4. Decide: Enrich or Discover
     let tickResult = {};
     const hasWclCreds = !!(wclClientId && wclClientSecret);
 
     if (pendingBefore > 0 && hasWclCreds) {
-      // ENRICH MODE — Process un-enriched players via WCL
-      console.log(`[WCL] Enriching batch of ${config.batchSize || 10} players...`);
-      logs.push(makeLog('info', `[WCL Enricher] Processing batch of ${config.batchSize || 10} from ${pendingBefore} pending...`));
+      // ENRICH MODE — Process un-enriched players via WCL (50 players per 5-min tick = 10 players/min = 600/hr)
+      const batchSize = Math.min(pendingBefore, config.batchSize || 50);
+      console.log(`[WCL] Enriching batch of ${batchSize} players (10 players/min pace)...`);
+      logs.push(makeLog('info', `[WCL Enricher] Processing batch of ${batchSize} from ${pendingBefore} pending...`));
 
       const result = await enrichBatch(registry, {
         region,
-        batchSize: config.batchSize || 10,
+        batchSize: batchSize,
         zoneId: config.wclZoneId || 55,
         clientId: wclClientId,
         clientSecret: wclClientSecret,

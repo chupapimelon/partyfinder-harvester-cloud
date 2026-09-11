@@ -79,6 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const regionsGrid = document.getElementById('regionsGrid');
 
   let isAutoPilotRunning = false;
+  let savedHarvesterStatus = null;
   let latestHarvestStatus = null;
   let timerCountdownSec = 60;
   let realmsScrapedCount = 114;
@@ -1773,28 +1774,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  async function persistHarvesterStatus(status) {
+    savedHarvesterStatus = status;
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/app_secrets`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ key: 'harvester_status', value: status })
+      });
+    } catch (e) {}
+  }
+
   // Auto-Pilot Toggle
   btnToggleAutoPilot.addEventListener('click', () => {
     isAutoPilotRunning = !isAutoPilotRunning;
     if (isAutoPilotRunning) {
+      persistHarvesterStatus('running');
       btnAutoPilotText.textContent = '⏸ PAUSE HARVESTER';
       autoPilotBadge.className = 'autopilot-status-badge active';
       autoPilotBadgeText.textContent = '24/7 AUTO-PILOT: ACTIVE';
       if (btnStopAutoPilot) btnStopAutoPilot.style.display = '';
-      appendLog('info', '24/7 Auto-Pilot Harvester started.');
+      appendLog('info', '24/7 Auto-Pilot Harvester started & saved to cloud state.');
       // Immediately run the first tick so user doesn't have to wait 60s
       executeAutoPilotTick();
     } else {
+      persistHarvesterStatus('paused');
       btnAutoPilotText.textContent = '▶ RESUME HARVESTER';
       autoPilotBadge.className = 'autopilot-status-badge';
       autoPilotBadgeText.textContent = 'HARVESTER PAUSED';
-      appendLog('warn', 'Harvester paused by user override.');
+      appendLog('warn', 'Harvester paused by user override (saved to cloud state).');
     }
   });
 
   // Auto-Pilot Stop (full stop & reset to standby)
   if (btnStopAutoPilot) {
     btnStopAutoPilot.addEventListener('click', () => {
+      persistHarvesterStatus('paused');
       isAutoPilotRunning = false;
       btnAutoPilotText.textContent = '▶ START HARVESTER';
       autoPilotBadge.className = 'autopilot-status-badge';
@@ -1805,7 +1825,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       btnStopAutoPilot.style.display = 'none';
       timerCountdownSec = 60;
-      appendLog('warn', '24/7 Auto-Pilot Harvester fully stopped. Reset to standby.');
+      appendLog('warn', '24/7 Auto-Pilot Harvester fully stopped (saved to cloud state).');
     });
   }
 
@@ -2228,11 +2248,26 @@ document.addEventListener('DOMContentLoaded', async () => {
           configuredMasterKey = item.value;
           loadedCount++;
         }
+        if (item.key === 'harvester_status') {
+          savedHarvesterStatus = item.value;
+        }
       });
 
       vaultStatusBadge.className = 'vault-indicator';
       vaultStatusText.textContent = `Supabase Vault: Active (${loadedCount} Keys Loaded)`;
       appendLog('info', `Supabase Vault connected: Loaded ${loadedCount} secrets.`);
+
+      // Check persistent cloud harvester state (resumes even in incognito or new window!)
+      const isCloudRunning = (savedHarvesterStatus === 'running') || (!savedHarvesterStatus && latestHarvestStatus?.running);
+      if (isCloudRunning && !isAutoPilotRunning) {
+        isAutoPilotRunning = true;
+        if (btnAutoPilotText) btnAutoPilotText.textContent = '⏸ PAUSE HARVESTER';
+        if (autoPilotBadge) autoPilotBadge.className = 'autopilot-status-badge active';
+        if (autoPilotBadgeText) autoPilotBadgeText.textContent = '24/7 AUTO-PILOT: ACTIVE';
+        if (btnStopAutoPilot) btnStopAutoPilot.style.display = '';
+        appendLog('info', '[24/7 Cloud Auto-Pilot] Persistent cloud state: ACTIVE. 24/7 self-driving harvester online.');
+        executeAutoPilotTick();
+      }
 
       // Automatically query live WCL rate limit budget & detect tier
       fetchLiveWclRateLimit().catch(() => {});
