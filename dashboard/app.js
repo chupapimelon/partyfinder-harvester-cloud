@@ -275,18 +275,47 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingEl.textContent = pending.toLocaleString();
           }
 
-          // Populate recent enriched player cards from cloud state
+          // Populate recent enriched player cards and stream into Real-Time Console
           const recents = data.recentEnriched || data.lastTickResult?.recentEnriched || [];
           if (Array.isArray(recents) && recents.length > 0) {
+            const newPlayersToStream = [];
             recents.forEach(p => {
               const pKey = `${p.name}-${p.realm}`;
               if (!seenDiscoveredKeys.has(pKey)) {
                 seenDiscoveredKeys.add(pKey);
-                streamDiscoveredPlayerCard(p);
+                newPlayersToStream.push(p);
               }
             });
-            if (livePlayerCounter) {
-              livePlayerCounter.textContent = `${seenDiscoveredKeys.size} recent`;
+
+            if (newPlayersToStream.length > 0) {
+              newPlayersToStream.forEach((p, idx) => {
+                setTimeout(() => {
+                  streamDiscoveredPlayerCard(p);
+
+                  // Print player parse in Real-Time Console Stream
+                  const role = p.role || (p.spec === 'Blood' || p.spec === 'Protection' || p.spec === 'Guardian' || p.spec === 'Brewmaster' || p.spec === 'Vengeance' ? 'Tank' : (p.spec === 'Restoration' || p.spec === 'Holy' || p.spec === 'Mistweaver' || p.spec === 'Preservation' || p.spec === 'Discipline' ? 'Healer' : 'DPS'));
+                  const medianVal = p.wcl?.medianParse !== undefined ? p.wcl.medianParse : (p.median !== undefined ? p.median : 0);
+                  const isUnlogged = p.unlogged || p.wcl?.unlogged;
+
+                  if (isUnlogged) {
+                    appendLog('warn', `◽ [Unlogged] ${p.name}-${p.realm} • Has Raider.IO score (${p.rioScore ? Math.round(p.rioScore) : 'M+'}) but 0 public WCL logs.`);
+                  } else {
+                    appendLog('success', `⚡ [Enriched] ${p.name}-${p.realm} • ${role} Median: ${medianVal}%`);
+                  }
+
+                  // Update Hourly WCL Budget after each player (+6 pts spent)
+                  if (currentWclRateLimit) {
+                    const limit = currentWclRateLimit.limitPerHour || 3600;
+                    currentWclRateLimit.pointsSpentThisHour = Math.min(limit, Math.round(((currentWclRateLimit.pointsSpentThisHour || 0) + 6) * 100) / 100);
+                    currentWclRateLimit.pointsRemaining = Math.max(0, Math.round((limit - currentWclRateLimit.pointsSpentThisHour) * 100) / 100);
+                    updateWclRateLimitUI(currentWclRateLimit);
+                  }
+                }, idx * 150);
+              });
+
+              if (livePlayerCounter) {
+                livePlayerCounter.textContent = `${seenDiscoveredKeys.size} recent`;
+              }
             }
           }
 
@@ -297,7 +326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               const lId = l.id || `${l.time}-${l.message}`;
               if (!seenLogIds.has(lId)) {
                 seenLogIds.add(lId);
-                appendLog(l.type || 'info', l.message, l.time);
+                appendLog(l.type || 'info', l.message);
               }
             });
           }
@@ -306,7 +335,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderAnalyticsGrid(rawRealmsData);
           }
 
-          const rl = data.rateLimit || data.wclRateLimit;
+          const rl = data.rateLimit || data.lastTickResult?.rateLimit || data.wclRateLimit;
           if (rl) {
             updateWclRateLimitUI(rl);
           }
@@ -2460,50 +2489,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     wclResetTimerInterval = setInterval(renderCountdown, 1000);
   }
 
-  let lastWclFetchCall = 0;
+   let lastWclFetchCall = 0;
 
   async function fetchLiveWclRateLimit(customCreds = null, force = false) {
     const now = Date.now();
-    // Do not spam endpoint more than once per minute unless explicitly forced (e.g. Test button)
-    if (!force && !customCreds && (now - lastWclFetchCall < 60000)) {
+    // Do not spam endpoint more than once every 10 seconds unless forced
+    if (!force && !customCreds && (now - lastWclFetchCall < 10000)) {
       return currentWclRateLimit;
     }
     lastWclFetchCall = now;
 
     try {
-      let res;
-      if (customCreds && customCreds.clientId && customCreds.clientSecret) {
-        res = await fetch('/api/wcl/rate-limit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...customCreds, force: true })
-        });
-      } else {
-        try {
-        res = await fetch('/api/wcl/rate-limit', {
-          method: customCreds ? 'POST' : 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          body: customCreds ? JSON.stringify(customCreds) : undefined
-        });
-      } catch(e) {}
-      if (!res || !res.ok) {
-        return { ok: true, tier: 'Standard (Free)', pointsSpentThisHour: 495, limitPerHour: 3600, pointsRemaining: 3105, pointsResetIn: 1400 };
-      }
-      }
+      let res = await fetch('/api/wcl/rate-limit', {
+        method: customCreds ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        body: customCreds ? JSON.stringify(customCreds) : undefined
+      });
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.ok) {
-        updateWclRateLimitUI(data);
-        return data;
-      } else {
-        throw new Error(data.error || 'Failed to fetch rate limit');
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.ok) {
+          updateWclRateLimitUI(data);
+          return data;
+        }
       }
     } catch (err) {
       console.warn('[WCL Rate Limit] Sync notice:', err.message);
-      throw err;
     }
+    return currentWclRateLimit;
   }
+
+  // Periodic 15s sync with Warcraft Logs official rate limit counter
+  setInterval(() => {
+    fetchLiveWclRateLimit(null, true).catch(() => {});
+  }, 15000);
 
   // Toggle Password Visibilities
   if (btnToggleSecret && cfgWclClientSecret) {

@@ -110,7 +110,7 @@ async function main() {
           accumulatedEnrichedThisTick += result.enrichedCount;
           allRecentEnriched = [...result.enrichedPlayers, ...allRecentEnriched].slice(0, 30);
           logs.push(makeLog('success', `[WCL Enricher] +${result.enrichedCount} players enriched (${curEnriched + result.enrichedCount} total).`));
-          for (const p of result.enrichedPlayers.slice(0, 3)) {
+          for (const p of result.enrichedPlayers) {
             const parseStr = p.wcl?.unlogged ? 'UNLOGGED' : `${p.wcl?.medianParse?.toFixed(1)}% median`;
             logs.push(makeLog('info', `  ✓ ${p.name}-${p.realm} (${p.rioScore} R.IO) → ${parseStr}`));
           }
@@ -121,6 +121,7 @@ async function main() {
           enrichedCount: accumulatedEnrichedThisTick,
           recentEnriched: allRecentEnriched,
           remainingInQueue: result.remainingInQueue,
+          rateLimit: result.rateLimit,
         };
       } else {
         // DISCOVERY MODE: Scrape new pushers from Raider.IO leaderboards
@@ -150,7 +151,8 @@ async function main() {
         lastTickAt: new Date().toISOString(),
         lastTickResult: lastTickResult,
         recentEnriched: allRecentEnriched,
-        logs: logs.slice(-20),
+        rateLimit: lastTickResult.rateLimit || null,
+        logs: logs.slice(-25),
         running: true,
         paused: false,
       };
@@ -184,6 +186,7 @@ async function main() {
       lastTickAt: new Date().toISOString(),
       lastTickResult: lastTickResult,
       recentEnriched: allRecentEnriched,
+      rateLimit: lastTickResult.rateLimit || null,
       logs: logs.slice(-25),
       running: true,
       paused: false,

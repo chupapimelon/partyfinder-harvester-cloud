@@ -82,6 +82,11 @@ async function enrichBatch(registry, options = {}) {
 
     const query = `
       query {
+        rateLimitData {
+          limitPerHour
+          pointsSpentThisHour
+          pointsResetIn
+        }
         characterData {
           character(name: "${player.name}", serverSlug: "${cleanSlug}", serverRegion: "${(player.region || region).toLowerCase()}") {
             id
@@ -112,6 +117,10 @@ async function enrichBatch(registry, options = {}) {
       }
 
       const qData = await res.json();
+      if (qData.data?.rateLimitData) {
+        latestRateLimit = qData.data.rateLimitData;
+      }
+
       if (qData.errors && qData.errors.length > 0) {
         console.warn(`[WCL] GraphQL error for ${playerKey}:`, qData.errors[0].message);
         continue;
@@ -166,6 +175,7 @@ async function enrichBatch(registry, options = {}) {
     enrichedCount: enrichedResults.length,
     remainingInQueue: unEnriched.length - enrichedResults.length,
     enrichedPlayers: enrichedResults,
+    rateLimit: latestRateLimit,
   };
 }
 
