@@ -282,6 +282,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const livePlayerCounter = document.getElementById('livePlayerCounter');
   const regionsGrid = document.getElementById('regionsGrid');
 
+  // Telemetry HUD Elements
+  const statTotalPlayers = document.getElementById('statTotalPlayers');
+  const statCacheSize = document.getElementById('statCacheSize');
+  const statEnrichedPlayers = document.getElementById('statEnrichedPlayers');
+  const statEnrichProgress = document.getElementById('statEnrichProgress');
+  const statEnrichPercent = document.getElementById('statEnrichPercent');
+  const statPendingPlayers = document.getElementById('statPendingPlayers');
+  const dbTotalCountBadge = document.getElementById('dbTotalCountBadge');
+  const footerMetaDate = document.getElementById('footerMetaDate');
+
   let isAutoPilotRunning = false;
   let savedHarvesterStatus = null;
   let latestHarvestStatus = null;
@@ -290,6 +300,74 @@ document.addEventListener('DOMContentLoaded', async () => {
   let liveEnrichedCounter = 0;
   let savedManualJobState = null;
   let lastJobPersistTime = 0;
+
+  // Real-Time Telemetry HUD Synchronizer
+  function updateTelemetryHUD(data = null) {
+    const statusData = data || latestHarvestStatus;
+    const dbTotal = Array.isArray(playerDatabase) ? playerDatabase.length : 0;
+    const dbEnriched = Array.isArray(playerDatabase) ? playerDatabase.filter(p => p && p.enriched).length : 0;
+
+    // Server-reported baselines (from R2 status.json / API)
+    const statusTotal = Number(statusData?.totalTrackedPlayers ?? statusData?.totalPlayers ?? statusData?.stats?.totalUniqueTracked ?? 0);
+    const statusEnriched = Number(statusData?.enrichedPlayers ?? statusData?.stats?.enrichedPlayers ?? 0);
+
+    // Active manual job progress counter
+    const activeCount = Math.max(
+      Number(liveEnrichedCounter || 0),
+      Number(savedManualJobState?.countThisRun || 0),
+      Number(statusData?.activeJob?.countThisRun || 0)
+    );
+    const currentMode = activeManualMode || savedManualJobState?.mode || statusData?.activeJob?.mode || 'raiderio';
+
+    // Total Tracked Players:
+    // In-memory playerDatabase.length is the live ground truth during sweeps.
+    // If a job is active or state was loaded, ensure it accurately reflects discovered players.
+    let totalTracked = Math.max(dbTotal, statusTotal);
+    if (currentMode === 'raiderio' && activeCount > 0) {
+      totalTracked = Math.max(totalTracked, statusTotal + activeCount, dbTotal);
+    }
+    if (totalTracked <= 0) totalTracked = 200;
+
+    // Combat Enriched Players:
+    let enrichedCount = Math.max(dbEnriched, statusEnriched);
+    if (currentMode === 'wcl' && activeCount > 0) {
+      enrichedCount = Math.max(enrichedCount, statusEnriched + activeCount, dbEnriched);
+    }
+
+    // Pending Enrichment Queue:
+    // Exactly all discovered pushers not yet enriched with WCL combat parses
+    const pendingCount = Math.max(0, totalTracked - enrichedCount);
+
+    // Update DOM
+    if (statTotalPlayers) {
+      statTotalPlayers.textContent = totalTracked.toLocaleString();
+    }
+    if (statCacheSize) {
+      const pctPool = ((totalTracked / 494116) * 100).toFixed(2);
+      statCacheSize.textContent = `${totalTracked.toLocaleString()} of 494,116 US Players (${pctPool}%)`;
+    }
+    if (statEnrichedPlayers) {
+      statEnrichedPlayers.textContent = enrichedCount.toLocaleString();
+    }
+    if (statPendingPlayers) {
+      statPendingPlayers.textContent = pendingCount.toLocaleString();
+    }
+
+    const pctEnriched = totalTracked > 0 ? ((enrichedCount / totalTracked) * 100).toFixed(1) : '0.0';
+    if (statEnrichProgress) {
+      statEnrichProgress.style.width = `${pctEnriched}%`;
+    }
+    if (statEnrichPercent) {
+      statEnrichPercent.textContent = `${pctEnriched}% ENRICHED`;
+    }
+
+    if (footerMetaDate) {
+      footerMetaDate.textContent = `Database: ${totalTracked.toLocaleString()} Players Recorded`;
+    }
+    if (dbTotalCountBadge) {
+      dbTotalCountBadge.textContent = `${totalTracked.toLocaleString()} Players Recorded`;
+    }
+  }
 
   // Persistent Cloud Manual Override State Handlers
   async function persistManualJobState(state) {
@@ -329,7 +407,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               isManualSweepPaused = !!mJob.paused;
               activeManualMode = mJob.mode || activeManualMode;
               liveEnrichedCounter = mJob.countThisRun || 0;
+              if (livePlayerCounter) {
+                livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+              }
             }
+            updateTelemetryHUD();
           }
         }
       }
@@ -434,10 +516,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           renderDatabaseTable();
-          const totalCount = playerDatabase.length;
-          if (statTotalPlayers) statTotalPlayers.textContent = totalCount.toLocaleString();
-          if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${totalCount.toLocaleString()} Players Recorded`;
-          if (footerMetaDate) footerMetaDate.textContent = `Database: ${totalCount.toLocaleString()} Players Recorded`;
+          updateTelemetryHUD();
 
           if (rawRealmsData) {
             renderAnalyticsGrid(rawRealmsData);
@@ -503,29 +582,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (data.ok) {
           latestHarvestStatus = data;
-          const total = data.totalTrackedPlayers ?? data.stats?.totalUniqueTracked ?? 131723;
-          const enriched = data.enrichedPlayers ?? data.stats?.enrichedPlayers ?? 258;
-          const pending = data.pendingEnrichment ?? data.stats?.pendingEnrichment ?? Math.max(0, total - enriched);
-
-          if (statTotalPlayers) {
-            statTotalPlayers.textContent = total.toLocaleString();
-          }
-          if (statCacheSize) {
-            statCacheSize.textContent = `${total.toLocaleString()} of 494,116 US Players (${((total / 494116) * 100).toFixed(2)}%)`;
-          }
-          if (statEnrichedPlayers) {
-            statEnrichedPlayers.textContent = enriched.toLocaleString();
-          }
-          const pct = total > 0 ? ((enriched / total) * 100).toFixed(1) : '0.0';
-          const enrichProgressEl = document.getElementById('statEnrichProgress');
-          const enrichPercentEl = document.getElementById('statEnrichPercent');
-          if (enrichProgressEl) enrichProgressEl.style.width = `${pct}%`;
-          if (enrichPercentEl) enrichPercentEl.textContent = `${pct}% ENRICHED`;
-
-          const pendingEl = document.getElementById('statPendingPlayers');
-          if (pendingEl) {
-            pendingEl.textContent = pending.toLocaleString();
-          }
+          updateTelemetryHUD(data);
 
           // Populate recent enriched player cards and stream into Real-Time Console
           const recents = data.recentEnriched || data.lastTickResult?.recentEnriched || [];
@@ -565,7 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }, idx * 150);
               });
 
-              if (livePlayerCounter) {
+              if (livePlayerCounter && !isManualSweepActive) {
                 livePlayerCounter.textContent = `${seenDiscoveredKeys.size} recent`;
               }
             }
@@ -618,6 +675,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
               }
+              updateTelemetryHUD(data);
 
               // Lock RUN NOW button so it cannot be clicked while running
               btnStartJob.disabled = true;
@@ -1581,9 +1639,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnDbNextPage.disabled = currentPage >= totalPages;
 
     // Sync telemetry
-    if (statTotalPlayers) statTotalPlayers.textContent = playerDatabase.length.toLocaleString();
-    if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${playerDatabase.length.toLocaleString()} Players Recorded`;
-    if (footerMetaDate) footerMetaDate.textContent = `Database: ${playerDatabase.length.toLocaleString()} Players Recorded`;
+    updateTelemetryHUD();
   }
 
   // --------------------------------------------------------------------------
@@ -2060,17 +2116,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (enrichedThisBatch > 0) {
           appendLog('success', `[24/7 Auto-Pilot] Batch enriched: ${enrichedThisBatch} players parsed with authentic WCL logs.`);
 
-          // Update HUD stats
-          const totalScraped = playerDatabase.length;
-          const enrichedNum = playerDatabase.filter(p => p.enriched).length;
-          const pendingNum = Math.max(0, totalScraped - enrichedNum);
-          if (statEnrichedPlayers) statEnrichedPlayers.textContent = enrichedNum.toLocaleString();
-          if (statPendingPlayers) statPendingPlayers.textContent = pendingNum.toLocaleString();
-          const pct = totalScraped > 0 ? ((enrichedNum / totalScraped) * 100).toFixed(1) : '0.0';
-          const enrichProgressEl = document.getElementById('statEnrichProgress');
-          const enrichPercentEl = document.getElementById('statEnrichPercent');
-          if (enrichProgressEl) enrichProgressEl.style.width = `${pct}%`;
-          if (enrichPercentEl) enrichPercentEl.textContent = `${pct}% ENRICHED`;
+          // Update HUD stats in real time
+          updateTelemetryHUD();
 
           // Trigger cloud harvester background job to persist progress to R2
           if (IS_CLOUD) {
@@ -2121,6 +2168,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
             });
 
+            if (addedCount > 0) {
+              updateTelemetryHUD();
+            }
             appendLog('success', `[24/7 Auto-Pilot] Raider.IO sweep complete: +${addedCount} new pushers queued for WCL enrichment.`);
           }
         } catch (rioErr) {
@@ -2450,6 +2500,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 liveEnrichedCounter++;
                 if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+                updateTelemetryHUD();
                 if (savedManualJobState) {
                   savedManualJobState.countThisRun = liveEnrichedCounter;
                   if (Date.now() - lastJobPersistTime > 4000) {
@@ -2527,17 +2578,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
           appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added${skippedLowLevel > 0 ? ` (${skippedLowLevel} sub-level-${CURRENT_LEVEL_CAP} skipped)` : ''}. Database: ${playerDatabase.length.toLocaleString()} players.`);
 
-          if (newChars > 0) {
-            const total = playerDatabase.length;
-            const pending = playerDatabase.filter(p => !p.enriched).length;
-            const enriched = total - pending;
-            if (statTotalPlayers) statTotalPlayers.textContent = total.toLocaleString();
-            if (statPendingPlayers) statPendingPlayers.textContent = pending.toLocaleString();
-            if (statEnrichedPlayers) statEnrichedPlayers.textContent = enriched.toLocaleString();
-            const pct = total > 0 ? ((enriched / total) * 100).toFixed(1) : '0.0';
-            if (statEnrichProgress) statEnrichProgress.style.width = `${pct}%`;
-            if (statEnrichPercent) statEnrichPercent.textContent = `${pct}% ENRICHED`;
-          }
+          updateTelemetryHUD();
         }
       } catch (err) {
         appendLog('error', `[Job Error] ${err.message}`);
