@@ -500,6 +500,17 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
             }
 
+            // Real-Time Enriched Player Cards stream synchronization (WCL Auto Harvester)
+            if (Array.isArray(mJob.recentEnriched) && mJob.recentEnriched.length > 0) {
+              mJob.recentEnriched.forEach(p => {
+                const cardKey = `${p.name}-${p.realm}`;
+                if (!seenDiscoveredKeys.has(cardKey)) {
+                  seenDiscoveredKeys.add(cardKey);
+                  streamDiscoveredPlayerCard(p);
+                }
+              });
+            }
+
             updateTelemetryHUD();
           }
         }

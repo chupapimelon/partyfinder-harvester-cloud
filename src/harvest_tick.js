@@ -326,9 +326,9 @@ async function main() {
         activeJob: manualJob && manualJob.running ? manualJob : {
           running: true,
           paused: false,
-          mode: lastTickResult.mode || 'raiderio',
+          mode: lastTickResult.mode || targetMode || 'wcl',
           region,
-          countThisRun: accumulatedNewThisTick,
+          countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? accumulatedEnrichedThisTick : accumulatedNewThisTick,
           page: registry.lastScannedPage || 0
         }
       };
@@ -377,9 +377,9 @@ async function main() {
       activeJob: manualJob && manualJob.running ? manualJob : {
         running: true,
         paused: false,
-        mode: lastTickResult.mode || 'raiderio',
+        mode: lastTickResult.mode || targetMode || 'wcl',
         region,
-        countThisRun: accumulatedNewThisTick,
+        countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? accumulatedEnrichedThisTick : accumulatedNewThisTick,
         page: registry.lastScannedPage || 0
       }
     };
