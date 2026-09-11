@@ -32,6 +32,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const R2_BASE = 'https://r2.imongmama.online';
+  const SUPABASE_URL = 'https://anvkqwbqgqcopsuhhene.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_FdCOqHNEXexN-CgD9Pb9Ag_SLV86t_I';
   let CURRENT_SEASON = 'season-mn-2';
   let CURRENT_SEASON_NAME = 'MN Season 2';
   let CURRENT_LEVEL_CAP = 90;
@@ -712,6 +714,12 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
               }
+              if (autoPilotBadge) {
+                autoPilotBadge.className = aj.paused ? 'autopilot-status-badge is-paused' : 'autopilot-status-badge is-running';
+                if (autoPilotBadgeText) {
+                  autoPilotBadgeText.textContent = aj.paused ? 'HARVESTER PAUSED' : 'HARVESTER: CRAWLING ACTIVE';
+                }
+              }
               updateTelemetryHUD(data);
 
               // Lock RUN NOW button so it cannot be clicked while running
@@ -748,6 +756,10 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (txtPauseJob) txtPauseJob.textContent = 'PAUSE';
               if (iconPauseJob) iconPauseJob.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
               btnStopJob.disabled = true;
+              if (autoPilotBadge && !isAutoPilotRunning) {
+                autoPilotBadge.className = 'autopilot-status-badge';
+                if (autoPilotBadgeText) autoPilotBadgeText.textContent = 'HARVESTER: STANDBY (PAUSED)';
+              }
             }
           }
 
@@ -774,8 +786,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Reload player database if new players were discovered
-          if (total !== lastLoadedPlayersTotal) {
-            lastLoadedPlayersTotal = total;
+          const currentTotalTracked = Number(data.totalTrackedPlayers || data.totalPlayers || 0);
+          if (currentTotalTracked > 0 && currentTotalTracked !== lastLoadedPlayersTotal) {
+            lastLoadedPlayersTotal = currentTotalTracked;
             loadHarvestPlayers().catch(() => {});
           }
         }
@@ -910,7 +923,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         KR: 'Korea',
         TW: 'Taiwan & Global'
       };
-      autoPilotPhaseDetail.textContent = `Iterating ${regNames[regionCode] || regionCode} Realms (${realms.length} Servers • ${totalPop.toLocaleString()} M+ Players)`;
+      const census = LIVE_RIO_CENSUS[regionCode] || totalPop;
+      autoPilotPhaseDetail.textContent = `Iterating ${regNames[regionCode] || regionCode} Realms (${realms.length} Servers • ${census.toLocaleString()} M+ Players)`;
     }
 
     if (autoPilotRealmCount) {
@@ -2965,9 +2979,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --------------------------------------------------------------------------
   // 7. Supabase Vault & Settings Management
   // --------------------------------------------------------------------------
-  const SUPABASE_URL = 'https://anvkqwbqgqcopsuhhene.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_FdCOqHNEXexN-CgD9Pb9Ag_SLV86t_I';
-
   const vaultStatusBadge = document.getElementById('vaultStatusBadge');
   const vaultStatusText = document.getElementById('vaultStatusText');
   const cfgWclClientId = document.getElementById('cfgWclClientId');
@@ -3629,4 +3640,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   fetchLiveWclRateLimit().catch(() => {});
   appendLog('info', `PartyFinder Studio v2 ready: Season ${CURRENT_SEASON} (${CURRENT_SEASON_NAME}), Level Cap: ${CURRENT_LEVEL_CAP}.`);
+
+  // --------------------------------------------------------------------------
+  // Real-Time Telemetry Polling Loop
+  // Keeps Desktop Monitor App and all browser tabs 100% in sync with live cloud state
+  // --------------------------------------------------------------------------
+  let isTelemetryPolling = false;
+  setInterval(async () => {
+    if (isTelemetryPolling) return;
+    isTelemetryPolling = true;
+    try {
+      await fetchHarvestStatus();
+      await loadManualJobState();
+    } catch (err) {
+      // Quiet background poll
+    } finally {
+      isTelemetryPolling = false;
+    }
+  }, 2500);
 });
