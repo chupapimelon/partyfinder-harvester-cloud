@@ -16,6 +16,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (loginSub) loginSub.innerHTML = 'PartyFinder Live Telemetry Monitor &bull; <strong>View-Only HUD</strong>';
   }
 
+  const IS_DESKTOP = !!(window.desktopBridge && window.desktopBridge.isElectron);
+  if (IS_DESKTOP) {
+    document.body.classList.add('is-desktop-app');
+    const winControls = document.getElementById('desktopWindowControls');
+    if (winControls) winControls.style.display = 'flex';
+
+    const btnWinMin = document.getElementById('btnWinMin');
+    const btnWinMax = document.getElementById('btnWinMax');
+    const btnWinClose = document.getElementById('btnWinClose');
+
+    if (btnWinMin) btnWinMin.addEventListener('click', () => window.desktopBridge.minimize());
+    if (btnWinMax) btnWinMax.addEventListener('click', () => window.desktopBridge.maximize());
+    if (btnWinClose) btnWinClose.addEventListener('click', () => window.desktopBridge.close());
+  }
+
   const R2_BASE = 'https://r2.imongmama.online';
   let CURRENT_SEASON = 'season-mn-2';
   let CURRENT_SEASON_NAME = 'MN Season 2';

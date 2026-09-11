@@ -10,7 +10,7 @@
   <link rel="preload" href="fonts/Naowh.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/GothamNarrowUltra.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=btn_uniform_v6">
+  <link rel="stylesheet" href="styles.css?v=btn_uniform_v7">
 </head>
 <body>
   <div class="studio-app">
@@ -59,6 +59,18 @@
           <button class="btn-micro btn-logout" id="btnLogout" title="Lock Studio &amp; Sign Out">
             <i class="bx bx-log-out"></i>
             <span>Logout</span>
+          </button>
+        </div>
+
+        <div class="desktop-window-controls" id="desktopWindowControls" style="display: none;">
+          <button class="win-control-btn" id="btnWinMin" title="Minimize">
+            <svg width="11" height="2" viewBox="0 0 11 2"><rect width="11" height="2" fill="currentColor"/></svg>
+          </button>
+          <button class="win-control-btn" id="btnWinMax" title="Maximize / Restore">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"><rect x="1.5" y="1.5" width="7" height="7" stroke-width="1.2"/></svg>
+          </button>
+          <button class="win-control-btn btn-win-close" id="btnWinClose" title="Close App">
+            <svg width="11" height="11" viewBox="0 0 11 11" stroke="currentColor" stroke-width="1.2"><line x1="1" y1="1" x2="10" y2="10"/><line x1="10" y1="1" x2="1" y2="10"/></svg>
           </button>
         </div>
       </div>
@@ -885,6 +897,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=cloud_20260912_v31"></script>
+  <script src="app.js?v=cloud_20260912_v32"></script>
 </body>
 </html>
