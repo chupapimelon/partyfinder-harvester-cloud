@@ -405,8 +405,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Persistent Buffers for Real-Time Console Stream & Card Telemetry across tabs and Desktop Monitor
+  const clientRecentLogsBuffer = [];
+  const clientRecentDiscoveredBuffer = [];
+
+  function getNextSweepPage(region = 'us') {
+    const reg = (region || currentActiveRegion || 'us').toLowerCase();
+    const localP = parseInt(localStorage.getItem('pf_cloud_sweep_page_' + reg), 10) || 0;
+    const supaP = parseInt(savedManualJobState?.page, 10) || 0;
+    const r2P = parseInt(latestHarvestStatus?.lastScannedPage || latestHarvestStatus?.lastTickResult?.lastScannedPage, 10) || 0;
+    const dbP = (Array.isArray(playerDatabase) && playerDatabase.length >= 100)
+      ? Math.floor(playerDatabase.length / 100)
+      : 0;
+
+    const resumePage = Math.max(localP, supaP, r2P, dbP);
+    return resumePage;
+  }
+
   // Persistent Cloud Manual Override State Handlers
   async function persistManualJobState(state) {
+    if (!IS_CLOUD) return;
+    if (state) {
+      state.recentLogs = clientRecentLogsBuffer.slice(-30);
+      state.recentDiscovered = clientRecentDiscoveredBuffer.slice(-20);
+      if (cloudSweepPage > 0) {
+        state.page = cloudSweepPage;
+      }
+      state.countThisRun = liveEnrichedCounter;
+      state.totalTracked = Array.isArray(playerDatabase) ? playerDatabase.length : 0;
+      state.lastHeartbeat = Date.now();
+    }
     savedManualJobState = state;
     try {
       await fetch(`${SUPABASE_URL}/rest/v1/app_secrets`, {
@@ -443,13 +471,43 @@ document.addEventListener('DOMContentLoaded', async () => {
               isManualSweepPaused = !!mJob.paused;
               activeManualMode = mJob.mode || activeManualMode;
               liveEnrichedCounter = Math.max(liveEnrichedCounter, mJob.countThisRun || 0);
-              if (!cloudSweepRunning && mJob.page !== undefined && mJob.page > 0) {
+
+              if (mJob.page !== undefined && mJob.page > 0) {
                 cloudSweepPage = Math.max(cloudSweepPage, mJob.page);
+                const regKey = (mJob.region || currentActiveRegion || 'us').toLowerCase();
+                const curLocal = parseInt(localStorage.getItem('pf_cloud_sweep_page_' + regKey), 10) || 0;
+                if (mJob.page > curLocal) {
+                  localStorage.setItem('pf_cloud_sweep_page_' + regKey, String(mJob.page));
+                }
               }
+
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
               }
             }
+
+            // Real-Time Console Stream synchronization (Desktop App & other tabs)
+            if (Array.isArray(mJob.recentLogs) && mJob.recentLogs.length > 0) {
+              mJob.recentLogs.forEach(l => {
+                const logKey = l.id || `${l.time}-${l.message}`;
+                if (!seenLogIds.has(logKey)) {
+                  seenLogIds.add(logKey);
+                  appendLog(l.type || 'info', l.message);
+                }
+              });
+            }
+
+            // Real-Time Discovered Player Cards stream synchronization (Desktop App & other tabs)
+            if (Array.isArray(mJob.recentDiscovered) && mJob.recentDiscovered.length > 0) {
+              mJob.recentDiscovered.forEach(p => {
+                const cardKey = `${p.name}-${p.realm}`;
+                if (!seenDiscoveredKeys.has(cardKey)) {
+                  seenDiscoveredKeys.add(cardKey);
+                  streamDiscoveredPlayerCard(p);
+                }
+              });
+            }
+
             updateTelemetryHUD();
           }
         }
@@ -1820,6 +1878,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function streamDiscoveredPlayerCard(player) {
+    if (!player || !player.name) return;
+    const cardKey = `${player.name}-${player.realm}`;
+    seenDiscoveredKeys.add(cardKey);
+
+    // Buffer for Supabase real-time sync with Desktop Monitor and other clients
+    const cardSummary = {
+      name: player.name,
+      realm: player.realm,
+      realmSlug: player.realmSlug || cleanRealmSlug(player.realm),
+      class: player.class,
+      spec: player.spec,
+      role: player.role,
+      rioScore: player.rioScore,
+      median: player.median,
+      metric: player.metric,
+      enriched: !!player.enriched,
+      unlogged: !!player.unlogged,
+      time: Date.now()
+    };
+    if (!clientRecentDiscoveredBuffer.some(c => c.name === player.name && c.realm === player.realm)) {
+      clientRecentDiscoveredBuffer.push(cardSummary);
+      if (clientRecentDiscoveredBuffer.length > 40) clientRecentDiscoveredBuffer.shift();
+    }
+
     if (!playerStream) return;
     const card = document.createElement('div');
     card.className = 'player-card';
@@ -1880,6 +1962,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   function appendLog(level, msg) {
     const d = new Date();
     const ts = d.toTimeString().split(' ')[0];
+    const logItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      time: ts,
+      type: level,
+      message: msg
+    };
+    seenLogIds.add(logItem.id);
+    seenLogIds.add(`${ts}-${msg}`);
+    clientRecentLogsBuffer.push(logItem);
+    if (clientRecentLogsBuffer.length > 60) clientRecentLogsBuffer.shift();
+
     const line = document.createElement('div');
     line.className = `log-line log-${level}`;
 
@@ -2605,13 +2698,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnResetProgress = document.getElementById('btnResetProgress');
   if (btnResetProgress) {
     btnResetProgress.addEventListener('click', async () => {
+      const region = (currentActiveRegion || 'US').toLowerCase();
+      localStorage.removeItem('pf_cloud_sweep_page_' + region);
+      localStorage.setItem('pf_cloud_sweep_page_' + region, '0');
       cloudSweepPage = 0;
       cloudCrawlerPage = 0;
       if (savedManualJobState) {
         savedManualJobState.page = 0;
         await persistManualJobState(savedManualJobState);
       }
-      const region = (currentActiveRegion || 'US').toLowerCase();
       try {
         const res = await fetch(`/api/harvest/raiderio/reset-progress?region=${region}`, { method: 'POST' });
         if (res.ok) {
@@ -2632,6 +2727,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function runCloudManualSweep(mode, region) {
     if (cloudSweepRunning || IS_VIEW_ONLY) return;
     cloudSweepRunning = true;
+    const regKey = (region || currentActiveRegion || 'us').toLowerCase();
+    if (cloudSweepPage === 0) {
+      cloudSweepPage = getNextSweepPage(regKey);
+    } else {
+      cloudSweepPage = Math.max(cloudSweepPage, getNextSweepPage(regKey));
+    }
+
     try {
     while (isManualSweepActive) {
       while (isManualSweepPaused && isManualSweepActive) {
@@ -2662,7 +2764,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateTelemetryHUD();
                 if (savedManualJobState) {
                   savedManualJobState.countThisRun = liveEnrichedCounter;
-                  if (Date.now() - lastJobPersistTime > 4000) {
+                  if (Date.now() - lastJobPersistTime > 2500) {
                     lastJobPersistTime = Date.now();
                     persistManualJobState(savedManualJobState);
                   }
@@ -2678,11 +2780,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         } else {
           // Raider.IO sweep using authentic characters rankings endpoint
-          if (cloudSweepPage === 0 && savedManualJobState?.page !== undefined && savedManualJobState.page > 0) {
-            cloudSweepPage = savedManualJobState.page;
-          } else if (cloudSweepPage === 0 && Array.isArray(playerDatabase) && playerDatabase.length >= 100) {
-            cloudSweepPage = Math.floor(playerDatabase.length / 100);
-          }
+          cloudSweepPage = Math.max(cloudSweepPage, getNextSweepPage(regKey));
           const currentPage = cloudSweepPage;
 
           // Fetch the page without advancing pointer yet
@@ -2690,11 +2788,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           const rankings = data.rankings?.rankedCharacters || data.rankings?.ranking?.records || (Array.isArray(data.rankings) ? data.rankings : []);
 
           if (!rankings || rankings.length === 0) {
-            appendLog('info', `[Raider.IO] Reached the end of active leaderboard at Page ${currentPage} (${playerDatabase.length.toLocaleString()} total pushers). Pointer reset to Rank #1.`);
-            cloudSweepPage = 0;
-            if (savedManualJobState) {
-              savedManualJobState.page = 0;
-              persistManualJobState(savedManualJobState);
+            if (currentPage > 500) {
+              appendLog('info', `[Raider.IO] Reached the end of active leaderboard at Page ${currentPage} (${playerDatabase.length.toLocaleString()} total pushers). Pointer reset to Rank #1.`);
+              cloudSweepPage = 0;
+              localStorage.setItem('pf_cloud_sweep_page_' + regKey, '0');
+              if (savedManualJobState) {
+                savedManualJobState.page = 0;
+                persistManualJobState(savedManualJobState);
+              }
+            } else {
+              appendLog('warn', `[Raider.IO] Received empty response on Page ${currentPage}. Retrying in 4s (pointer preserved)...`);
+              await new Promise(r => setTimeout(r, 4000));
+              continue;
             }
             break;
           }
@@ -2741,6 +2846,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // ONLY advance page pointer after successful fetch & processing
           cloudSweepPage++;
+          localStorage.setItem('pf_cloud_sweep_page_' + regKey, String(cloudSweepPage));
 
           const startRank = (currentPage * 100) + 1;
           const endRank = (currentPage + 1) * 100;
@@ -2749,7 +2855,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (savedManualJobState) {
             savedManualJobState.countThisRun = liveEnrichedCounter;
             savedManualJobState.page = cloudSweepPage;
-            if (Date.now() - lastJobPersistTime > 4000) {
+            if (Date.now() - lastJobPersistTime > 2500 || newChars > 0) {
               lastJobPersistTime = Date.now();
               persistManualJobState(savedManualJobState);
             }
@@ -2856,9 +2962,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnStopJob.disabled = false;
 
     if (IS_CLOUD) {
-      const startPage = (savedManualJobState?.page !== undefined && savedManualJobState.page > 0)
-        ? savedManualJobState.page
-        : (Array.isArray(playerDatabase) && playerDatabase.length >= 100 ? Math.floor(playerDatabase.length / 100) : 0);
+      const startPage = getNextSweepPage(region);
       cloudSweepPage = startPage;
       const jobState = {
         running: true,
@@ -2878,6 +2982,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       runCloudManualSweep(activeManualMode, region);
       return;
     }
+
 
     try {
       const res = await fetch('/api/harvest/start', {
