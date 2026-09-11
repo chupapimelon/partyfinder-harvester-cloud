@@ -190,10 +190,14 @@ async function main() {
 
           if (isManualActive) {
             manualJob.countThisRun = (manualJob.countThisRun || 0) + result.enrichedCount;
-            await sb.getClient().from('app_secrets').upsert({
-              key: 'manual_job_state',
-              value: JSON.stringify(manualJob)
-            }, { onConflict: 'key' }).catch(() => {});
+            try {
+              await sb.getClient().from('app_secrets').upsert({
+                key: 'manual_job_state',
+                value: JSON.stringify(manualJob)
+              }, { onConflict: 'key' });
+            } catch (err) {
+              console.warn('[Manual State] Failed to persist state:', err.message);
+            }
           }
         }
 
@@ -218,10 +222,14 @@ async function main() {
         accumulatedNewThisTick += newFound;
         if (isManualActive) {
           manualJob.countThisRun = (manualJob.countThisRun || 0) + newFound;
-          await sb.getClient().from('app_secrets').upsert({
-            key: 'manual_job_state',
-            value: JSON.stringify(manualJob)
-          }, { onConflict: 'key' }).catch(() => {});
+          try {
+            await sb.getClient().from('app_secrets').upsert({
+              key: 'manual_job_state',
+              value: JSON.stringify(manualJob)
+            }, { onConflict: 'key' });
+          } catch (err) {
+            console.warn('[Manual State] Failed to persist state:', err.message);
+          }
         }
 
         lastTickResult = {
