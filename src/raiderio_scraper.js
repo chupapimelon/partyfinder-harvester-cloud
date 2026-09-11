@@ -103,7 +103,8 @@ async function scanRaiderIoPages(registry, options = {}) {
 
     const rankedList = data.rankings?.rankedCharacters || [];
     if (rankedList.length === 0) {
-      console.log(`[RaiderIO] No more characters on page ${p}. End of leaderboard.`);
+      console.log(`[RaiderIO] No more characters on page ${p}. End of leaderboard reached. Wrapping back to Rank #1 (Page 0)...`);
+      registry.lastScannedPage = 0;
       break;
     }
 
