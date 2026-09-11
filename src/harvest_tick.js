@@ -106,11 +106,22 @@ async function main() {
       }
     }
 
-    // Check if user paused the harvester from dashboard
+    // Check if user set a manual override or paused harvester
+    let manualJob = null;
     try {
       const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
       const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
-      if (statusEntry && statusEntry.value === 'paused') {
+      const mEntry = secretRows?.find(s => s.key === 'manual_job_state');
+      if (mEntry && mEntry.value) {
+        manualJob = typeof mEntry.value === 'string' ? JSON.parse(mEntry.value) : mEntry.value;
+      }
+
+      if (manualJob && manualJob.running) {
+        if (manualJob.paused) {
+          console.log('[Cloud Tick] Manual override job is PAUSED by user. Standing by.');
+          return;
+        }
+      } else if (statusEntry && statusEntry.value === 'paused') {
         console.log('[Cloud Tick] Harvester is paused by user override. Standing by.');
         return;
       }
@@ -120,16 +131,28 @@ async function main() {
     const TOTAL_CYCLES = 5;
     const CYCLE_BATCH_SIZE = 10;
     let accumulatedEnrichedThisTick = 0;
+    let accumulatedNewThisTick = 0;
     let allRecentEnriched = [];
     let lastTickResult = {};
     const hasWclCreds = !!(wclClientId && wclClientSecret);
 
     for (let cycle = 0; cycle < TOTAL_CYCLES; cycle++) {
-      // Responsively check if user paused from dashboard
+      // Responsively check if user paused or stopped from dashboard
       try {
         const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
         const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
-        if (statusEntry && statusEntry.value === 'paused') {
+        const mEntry = secretRows?.find(s => s.key === 'manual_job_state');
+        if (mEntry && mEntry.value) {
+          manualJob = typeof mEntry.value === 'string' ? JSON.parse(mEntry.value) : mEntry.value;
+        }
+
+        if (manualJob && manualJob.running) {
+          if (manualJob.paused) {
+            console.log(`[Cloud Tick] Manual override job PAUSED at cycle ${cycle + 1}/${TOTAL_CYCLES}. Standing by.`);
+            logs.push(makeLog('warn', `[Job Control] Sweep PAUSED by user override.`));
+            break;
+          }
+        } else if (statusEntry && statusEntry.value === 'paused') {
           console.log(`[Cloud Tick] Harvester paused by user override at cycle ${cycle + 1}/${TOTAL_CYCLES}. Standing by.`);
           logs.push(makeLog('warn', `[Cloud Tick] Harvester paused by user override.`));
           break;
@@ -140,7 +163,11 @@ async function main() {
       const curEnriched = Object.values(registry.players).filter(p => p.enriched).length;
       const curPending = curTotal - curEnriched;
 
-      if (curPending > 0 && hasWclCreds) {
+      // Determine operating mode: If manual override is active, force that mode
+      const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
+      const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds ? 'wcl' : 'raiderio');
+
+      if (targetMode === 'wcl' && curPending > 0 && hasWclCreds) {
         console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (10/min)...`);
         logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching 10 players...`));
 
@@ -160,6 +187,14 @@ async function main() {
             const parseStr = p.wcl?.unlogged ? 'UNLOGGED' : `${p.wcl?.medianParse?.toFixed(1)}% median`;
             logs.push(makeLog('info', `  ✓ ${p.name}-${p.realm} (${p.rioScore} R.IO) → ${parseStr}`));
           }
+
+          if (isManualActive) {
+            manualJob.countThisRun = (manualJob.countThisRun || 0) + result.enrichedCount;
+            await sb.getClient().from('app_secrets').upsert({
+              key: 'manual_job_state',
+              value: JSON.stringify(manualJob)
+            }, { onConflict: 'key' }).catch(() => {});
+          }
         }
 
         lastTickResult = {
@@ -171,13 +206,24 @@ async function main() {
         };
       } else {
         // DISCOVERY MODE: Scrape new pushers from Raider.IO leaderboards
-        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Scanning Raider.IO leaderboards...`);
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Scanning Raider.IO leaderboards (Season: ${seasonInfo.slug}, Cap: ${seasonInfo.levelCap})...`);
         const result = await scanRaiderIoPages(registry, {
           region,
           pageCount: 2,
-          season: getCurrentSeason(),
-          levelCap: getCurrentLevelCap(),
+          season: seasonInfo.slug,
+          levelCap: seasonInfo.levelCap,
         });
+
+        const newFound = result.newPlayersCount || 0;
+        accumulatedNewThisTick += newFound;
+        if (isManualActive) {
+          manualJob.countThisRun = (manualJob.countThisRun || 0) + newFound;
+          await sb.getClient().from('app_secrets').upsert({
+            key: 'manual_job_state',
+            value: JSON.stringify(manualJob)
+          }, { onConflict: 'key' }).catch(() => {});
+        }
+
         lastTickResult = {
           mode: 'raiderio',
           newPlayersCount: result.newPlayersCount,
@@ -194,7 +240,7 @@ async function main() {
       const currentEnrichedTotal = Object.values(registry.players).filter(p => p.enriched).length;
       const currentPendingTotal = Object.keys(registry.players).length - currentEnrichedTotal;
       const statusData = {
-        mode: lastTickResult.mode || 'wcl',
+        mode: lastTickResult.mode || targetMode || 'wcl',
         lastTickAt: new Date().toISOString(),
         lastTickResult: lastTickResult,
         recentEnriched: allRecentEnriched,
@@ -202,6 +248,13 @@ async function main() {
         logs: logs.slice(-25),
         running: true,
         paused: false,
+        activeJob: manualJob && manualJob.running ? manualJob : {
+          running: false,
+          paused: false,
+          mode: 'raiderio',
+          region,
+          countThisRun: 0
+        }
       };
       await uploadStatusOnly(registry, region, statusData);
 
@@ -214,7 +267,7 @@ async function main() {
           enrichedPlayers: currentEnrichedTotal,
           pendingEnrichment: currentPendingTotal,
           lastTickAt: new Date().toISOString(),
-          lastTickMode: lastTickResult.mode || 'wcl',
+          lastTickMode: lastTickResult.mode || targetMode || 'wcl',
         };
         await sb.setState('progress', progress);
       } catch (e) {}
@@ -229,7 +282,7 @@ async function main() {
     // 5. Regenerate static API pages for top 20 pages
     console.log('[PageGen] Regenerating top static API pages...');
     const finalStatus = {
-      mode: lastTickResult.mode || 'idle',
+      mode: lastTickResult.mode || (manualJob && manualJob.running ? manualJob.mode : 'idle'),
       lastTickAt: new Date().toISOString(),
       lastTickResult: lastTickResult,
       recentEnriched: allRecentEnriched,
@@ -237,6 +290,13 @@ async function main() {
       logs: logs.slice(-25),
       running: true,
       paused: false,
+      activeJob: manualJob && manualJob.running ? manualJob : {
+        running: false,
+        paused: false,
+        mode: 'raiderio',
+        region,
+        countThisRun: 0
+      }
     };
     await generateAndUploadPages(registry, region, finalStatus);
     logs.push(makeLog('success', `[PageGen] Static API pages regenerated.`));
@@ -250,15 +310,18 @@ async function main() {
     const enrichedAfter = Object.values(registry.players).filter(p => p.enriched).length;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`\n=== 5-minute autonomous run complete in ${elapsed}s ===`);
-    console.log(`Total Players: ${totalAfter} | Enriched: ${enrichedAfter} (+${accumulatedEnrichedThisTick} this run)`);
+    console.log(`Total Players: ${totalAfter} | Enriched: ${enrichedAfter} (+${accumulatedEnrichedThisTick} enriched, +${accumulatedNewThisTick} discovered)`);
 
-    // 7. Autonomous 24/7 Chain: If harvester is still running, trigger next workflow run!
+    // 7. Autonomous 24/7 Chain: If harvester or manual override is still running, trigger next workflow run!
     try {
       const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
       const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
       const ghEntry = secretRows?.find(s => s.key === 'github_token');
-      if (statusEntry && statusEntry.value === 'running' && ghEntry && ghEntry.value) {
-        console.log('[Autonomous Chain] Harvester state is ACTIVE. Dispatching next 5-minute cloud cycle...');
+      const isHarvesterActive = (statusEntry && statusEntry.value === 'running');
+      const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
+
+      if ((isHarvesterActive || isManualActive) && ghEntry && ghEntry.value) {
+        console.log('[Autonomous Chain] Harvester/Manual state is ACTIVE. Dispatching next 5-minute cloud cycle...');
         await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
           method: 'POST',
           headers: {

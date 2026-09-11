@@ -288,6 +288,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   let timerCountdownSec = 60;
   let realmsScrapedCount = 114;
   let liveEnrichedCounter = 0;
+  let savedManualJobState = null;
+  let lastJobPersistTime = 0;
+
+  // Persistent Cloud Manual Override State Handlers
+  async function persistManualJobState(state) {
+    savedManualJobState = state;
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/app_secrets`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ key: 'manual_job_state', value: JSON.stringify(state) })
+      });
+    } catch (e) {
+      console.warn('Failed to persist manual job state to Supabase:', e);
+    }
+  }
+
+  async function loadManualJobState() {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.manual_job_state&select=value`, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows && rows.length > 0 && rows[0].value) {
+          const mJob = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
+          if (mJob) {
+            savedManualJobState = mJob;
+            if (mJob.running) {
+              isManualSweepActive = true;
+              isManualSweepPaused = !!mJob.paused;
+              activeManualMode = mJob.mode || activeManualMode;
+              liveEnrichedCounter = mJob.countThisRun || 0;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   let currentPage = 1;
   const itemsPerPage = 25;
 
@@ -444,7 +492,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               KR: { harvested: 0, enriched: 0 },
               TW: { harvested: 0, enriched: 0 }
             },
-            activeJob: {
+            activeJob: savedManualJobState || data.activeJob || {
               running: isManualSweepActive,
               paused: isManualSweepPaused,
               mode: activeManualMode || 'raiderio',
@@ -544,13 +592,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateWclRateLimitUI(rl);
           }
 
-          // Synchronize Persistent Active Job State (Preserves run across browser refresh)
-          if (data.activeJob) {
-            const aj = data.activeJob;
+          // Synchronize Persistent Active Job State (Preserves run across browser refresh & incognito)
+          const activeJobData = savedManualJobState || data.activeJob;
+          if (activeJobData) {
+            const aj = activeJobData;
             if (aj.running) {
               isManualSweepActive = true;
               isManualSweepPaused = !!aj.paused;
-              liveEnrichedCounter = aj.countThisRun || 0;
+              activeManualMode = aj.mode || activeManualMode;
+              liveEnrichedCounter = Math.max(liveEnrichedCounter, aj.countThisRun || 0);
+
+              // Keep mode selector buttons synchronized
+              if (activeManualMode === 'raiderio') {
+                const pRio = document.getElementById('modeRaiderIo');
+                const pWcl = document.getElementById('modeWcl');
+                pRio?.classList.add('active');
+                pWcl?.classList.remove('active');
+              } else if (activeManualMode === 'wcl') {
+                const pRio = document.getElementById('modeRaiderIo');
+                const pWcl = document.getElementById('modeWcl');
+                pWcl?.classList.add('active');
+                pRio?.classList.remove('active');
+              }
 
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
@@ -573,7 +636,12 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
 
               btnStopJob.disabled = false;
-            } else if (isManualSweepActive && !aj.running) {
+
+              // If opening tab (e.g. in incognito) while sweep is running in cloud, resume client animations if open
+              if (IS_CLOUD && !cloudSweepRunning && !aj.paused) {
+                runCloudManualSweep(activeManualMode, aj.region || currentActiveRegion || 'us');
+              }
+            } else if (isManualSweepActive && (!aj || !aj.running)) {
               // Active job stopped or completed
               isManualSweepActive = false;
               isManualSweepPaused = false;
@@ -2241,6 +2309,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         if (IS_CLOUD) {
           isManualSweepPaused = !isManualSweepPaused;
+          if (!savedManualJobState) {
+            savedManualJobState = {
+              running: true,
+              paused: isManualSweepPaused,
+              mode: activeManualMode,
+              region: (currentActiveRegion || 'US').toLowerCase(),
+              countThisRun: liveEnrichedCounter,
+              startedAt: Date.now()
+            };
+          } else {
+            savedManualJobState.paused = isManualSweepPaused;
+          }
+          await persistManualJobState(savedManualJobState);
+
           if (isManualSweepPaused) {
             btnPauseJob.classList.add('is-paused');
             if (txtPauseJob) txtPauseJob.textContent = 'RESUME';
@@ -2251,6 +2333,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (txtPauseJob) txtPauseJob.textContent = 'PAUSE';
             if (iconPauseJob) iconPauseJob.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
             appendLog('info', '[Job Control] Sweep RESUMED.');
+            triggerCloudHarvesterDispatch(true);
+            if (!cloudSweepRunning) {
+              runCloudManualSweep(activeManualMode, currentActiveRegion || 'us');
+            }
           }
           return;
         }
@@ -2289,6 +2375,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnStartJob.disabled = false;
     try {
       if (IS_CLOUD) {
+        if (!savedManualJobState) {
+          savedManualJobState = {
+            running: false,
+            paused: false,
+            mode: activeManualMode,
+            region: (currentActiveRegion || 'US').toLowerCase(),
+            countThisRun: liveEnrichedCounter
+          };
+        } else {
+          savedManualJobState.running = false;
+          savedManualJobState.paused = false;
+        }
+        await persistManualJobState(savedManualJobState);
+        await persistHarvesterStatus('paused');
         appendLog('warn', '[Job Control] STOP signal received from user. Terminating active operations...');
         appendLog('info', '[Job Runner] Session ended. Ready for next command.');
         return;
@@ -2350,6 +2450,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 liveEnrichedCounter++;
                 if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+                if (savedManualJobState) {
+                  savedManualJobState.countThisRun = liveEnrichedCounter;
+                  if (Date.now() - lastJobPersistTime > 4000) {
+                    lastJobPersistTime = Date.now();
+                    persistManualJobState(savedManualJobState);
+                  }
+                }
                 await new Promise(r => setTimeout(r, 100));
               } catch (pErr) {
                 appendLog('warn', `[WCL Parse Error] ${p.name}: ${pErr.message}`);
@@ -2411,6 +2518,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           const endRank = (currentPage + 1) * 100;
           liveEnrichedCounter += newChars;
           if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
+          if (savedManualJobState) {
+            savedManualJobState.countThisRun = liveEnrichedCounter;
+            if (Date.now() - lastJobPersistTime > 4000) {
+              lastJobPersistTime = Date.now();
+              persistManualJobState(savedManualJobState);
+            }
+          }
           appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added${skippedLowLevel > 0 ? ` (${skippedLowLevel} sub-level-${CURRENT_LEVEL_CAP} skipped)` : ''}. Database: ${playerDatabase.length.toLocaleString()} players.`);
 
           if (newChars > 0) {
@@ -2452,17 +2566,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     const region = (currentActiveRegion || 'US').toLowerCase();
 
     if (activeManualMode === 'deploy') {
-      appendLog('info', 'Connecting to Cloudflare CDN pipeline (https://imongmama.online)...');
+      appendLog('info', 'Connecting to GitHub Actions CDN deployment pipeline (deploy_cdn.yml)...');
       try {
         if (IS_CLOUD) {
-        appendLog('info', 'Connecting to Cloudflare CDN pipeline (https://imongmama.online)...');
-        await new Promise(r => setTimeout(r, 600));
-        appendLog('success', `[CDN Deployment Complete] ${(131723 + liveEnrichedCounter).toLocaleString()} players live on Cloudflare Pages.`);
-        lastAutoDeployTime = Date.now();
-        btnSyncCloud.disabled = false;
-        return;
-      }
-      const res = await fetch('/api/harvest/deploy', { method: 'POST' });
+          let token = cfgGithubToken?.value?.trim();
+          if (!token) {
+            const tokenRes = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.github_token&select=value`, {
+              headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+            });
+            const tokenData = await tokenRes.json();
+            token = tokenData && tokenData[0] ? tokenData[0].value : null;
+          }
+          if (token) {
+            const dRes = await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/deploy_cdn.yml/dispatches', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'PartyFinder-Dashboard'
+              },
+              body: JSON.stringify({ ref: 'main' })
+            });
+            if (dRes.status === 204) {
+              appendLog('success', `🚀 [CDN Deployment Dispatched] GitHub Actions deploy_cdn.yml triggered! Compiling Lua database and deploying live to Cloudflare.`);
+            } else {
+              appendLog('warn', `[Deploy Notice] GitHub responded with HTTP ${dRes.status}`);
+            }
+          } else {
+            appendLog('error', '[Deploy Error] No GitHub token found in Supabase vault.');
+          }
+          lastAutoDeployTime = Date.now();
+          btnSyncCloud.disabled = false;
+          return;
+        }
+        const res = await fetch('/api/harvest/deploy', { method: 'POST' });
         const data = await res.json();
         if (data.ok) {
           appendLog('success', `[CDN Deployment Complete] ${data.result?.stats?.totalPlayers?.toLocaleString() || '131k'} players live on Cloudflare Pages.`);
@@ -2492,7 +2629,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnStopJob.disabled = false;
 
     if (IS_CLOUD) {
-      appendLog('info', `[Cloud Engine] Initiating continuous live ${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'} for [${region.toUpperCase()}] pushers... (Click PAUSE or STOP anytime)`);
+      const jobState = {
+        running: true,
+        paused: false,
+        mode: activeManualMode,
+        region: region,
+        countThisRun: 0,
+        startedAt: Date.now()
+      };
+      savedManualJobState = jobState;
+      await persistManualJobState(jobState);
+      await persistHarvesterStatus('running');
+      triggerCloudHarvesterDispatch(true);
+
+      appendLog('info', `[Cloud Engine] Initiating persistent live ${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'} for [${region.toUpperCase()}] pushers... (Persists across tab close & incognito)`);
       runCloudManualSweep(activeManualMode, region);
       return;
     }
@@ -2526,6 +2676,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnSyncCloud.addEventListener('click', async () => {
     if (btnSyncCloud.disabled) return;
     btnSyncCloud.disabled = true;
+
+    if (IS_CLOUD) {
+      appendLog('info', 'Connecting to GitHub Actions CDN deployment pipeline (deploy_cdn.yml)...');
+      try {
+        let token = cfgGithubToken?.value?.trim();
+        if (!token) {
+          const tokenRes = await fetch(`${SUPABASE_URL}/rest/v1/app_secrets?key=eq.github_token&select=value`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+          });
+          const tokenData = await tokenRes.json();
+          token = tokenData && tokenData[0] ? tokenData[0].value : null;
+        }
+        if (token) {
+          const dRes = await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/deploy_cdn.yml/dispatches', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'User-Agent': 'PartyFinder-Dashboard'
+            },
+            body: JSON.stringify({ ref: 'main' })
+          });
+          if (dRes.status === 204) {
+            appendLog('success', '🚀 [CDN Deployment Dispatched] GitHub Actions workflow deploy_cdn.yml triggered! Compiling Lua and pushing live to Cloudflare Pages.');
+          } else {
+            appendLog('warn', `[Deploy Notice] GitHub responded with HTTP ${dRes.status}`);
+          }
+        } else {
+          appendLog('error', '[Deploy Error] No GitHub token found in Supabase vault.');
+        }
+      } catch (deployErr) {
+        appendLog('error', `[Deploy Error] ${deployErr.message}`);
+      } finally {
+        btnSyncCloud.disabled = false;
+        lastAutoDeployTime = Date.now();
+      }
+      return;
+    }
+
     appendLog('info', 'Initiating live database compilation and edge push to https://imongmama.online...');
     try {
       const res = await fetch('/api/harvest/deploy', { method: 'POST' });
@@ -2631,6 +2820,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (item.key === 'harvester_status') {
           savedHarvesterStatus = item.value;
+        }
+        if (item.key === 'manual_job_state' && item.value) {
+          try {
+            const mJob = typeof item.value === 'string' ? JSON.parse(item.value) : item.value;
+            if (mJob) {
+              savedManualJobState = mJob;
+            }
+          } catch (e) {}
         }
       });
 
@@ -3198,6 +3395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await detectSeasonAndLevelCap().catch(() => {});
   await loadRealms();
   await loadHarvestPlayers();
+  await loadManualJobState();
   await fetchHarvestStatus();
   renderDatabaseTable();
   const isAuthenticated = checkSession();
