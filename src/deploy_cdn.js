@@ -8,6 +8,7 @@
 const crypto = require('crypto');
 const r2 = require('./r2_client');
 const sb = require('./supabase_client');
+const { getCurrentLevelCap } = require('./season_detector');
 
 const GITHUB_DEPLOY_TOKEN = process.env.GITHUB_DEPLOY_TOKEN;
 const GITHUB_REPO = 'chupapimelon/imong-mama-ui';
@@ -89,9 +90,11 @@ async function compileDatabase() {
   let enriched = 0, pending = 0, totalUnique = 0;
   const subRegionCounts = {};
   const playerLines = [];
+  const levelCap = getCurrentLevelCap();
 
   for (const [key, p] of Object.entries(allPlayers)) {
     if (!p || typeof p !== 'object') continue;
+    if (p.level && p.level < levelCap) continue;
     totalUnique++;
     if (p.enriched) enriched++;
     else pending++;
