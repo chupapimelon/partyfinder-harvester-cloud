@@ -11,7 +11,8 @@
 
 const r2 = require('./r2_client');
 const sb = require('./supabase_client');
-const { scanRaiderIoPages, CURRENT_SEASON } = require('./raiderio_scraper');
+const { scanRaiderIoPages } = require('./raiderio_scraper');
+const { detectCurrentSeason, getCurrentSeason, getCurrentLevelCap } = require('./season_detector');
 const { enrichBatch } = require('./wcl_enricher');
 const { generateAndUploadPages, uploadStatusOnly } = require('./page_generator');
 
@@ -40,6 +41,11 @@ async function main() {
     };
     const region = (config.primaryRegion || 'us').toLowerCase();
     logs.push(makeLog('info', `[Cloud Tick] Starting 24/7 autonomous worker for [${region.toUpperCase()}]...`));
+
+    // Detect active season and level cap
+    const seasonInfo = await detectCurrentSeason().catch(() => ({ slug: getCurrentSeason(), levelCap: getCurrentLevelCap() }));
+    console.log(`[Cloud Tick] Active season: ${seasonInfo.slug}, Max Level Cap: ${seasonInfo.levelCap}`);
+    logs.push(makeLog('info', `[Season] Active: ${seasonInfo.slug} (${seasonInfo.name || ''}), Level Cap: ${seasonInfo.levelCap}`));
 
     // 2. Download player registry from R2
     console.log(`[R2] Downloading player registry for ${region}...`);
@@ -129,7 +135,8 @@ async function main() {
         const result = await scanRaiderIoPages(registry, {
           region,
           pageCount: 2,
-          season: CURRENT_SEASON,
+          season: getCurrentSeason(),
+          levelCap: getCurrentLevelCap(),
         });
         lastTickResult = {
           mode: 'raiderio',

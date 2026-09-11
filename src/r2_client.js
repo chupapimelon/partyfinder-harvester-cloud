@@ -3,6 +3,7 @@
  * Handles all player data read/write operations to R2
  */
 const { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getCurrentSeason } = require('./season_detector');
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
@@ -124,7 +125,7 @@ async function loadPlayerRegistry(region) {
   }
   return {
     region: reg.toUpperCase(),
-    season: 'season-mn-2',
+    season: getCurrentSeason(),
     updatedAt: 0,
     totalUnique: 0,
     lastScannedPage: 0,
@@ -140,7 +141,7 @@ async function loadPlayerRegistry(region) {
 async function savePlayerRegistry(region, registry) {
   const reg = (region || 'us').toLowerCase();
   registry.updatedAt = Date.now();
-  registry.season = registry.season || 'season-mn-2';
+  registry.season = registry.season || getCurrentSeason();
   registry.totalUnique = Object.keys(registry.players).length;
   if (typeof registry.lastScannedPage !== 'number') {
     registry.lastScannedPage = 0;

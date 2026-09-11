@@ -4,7 +4,13 @@
  * Key difference: uses R2 client instead of local filesystem
  */
 
-const CURRENT_SEASON = 'season-mn-2'; // Midnight Season 2
+const {
+  detectCurrentSeason,
+  getCurrentSeason,
+  getCurrentLevelCap,
+  FALLBACK_SEASON,
+  FALLBACK_LEVEL_CAP
+} = require('./season_detector');
 
 function cleanRealmSlug(realm) {
   if (!realm) return '';
@@ -23,7 +29,9 @@ function cleanRealmSlug(realm) {
  * @returns {{ newPlayersCount, updatedPlayersCount, lastScannedPage, discovered, error }}
  */
 async function scanRaiderIoPages(registry, options = {}) {
-  const season = options.season || CURRENT_SEASON;
+  await detectCurrentSeason().catch(() => {});
+  const season = options.season || getCurrentSeason();
+  const levelCap = options.levelCap || getCurrentLevelCap();
   const region = (options.region || 'us').toLowerCase();
   const pageCount = Math.min(parseInt(options.pageCount, 10) || 2, 10);
 
@@ -34,6 +42,7 @@ async function scanRaiderIoPages(registry, options = {}) {
   let runsProcessed = 0;
   let newPlayersCount = 0;
   let updatedPlayersCount = 0;
+  let skippedLowLevelCount = 0;
   let lastScannedPage = pageStart;
   let fetchError = null;
   const discoveredList = [];
@@ -106,6 +115,12 @@ async function scanRaiderIoPages(registry, options = {}) {
       const char = item.character;
       if (!char || !char.name || !char.realm) continue;
 
+      // Filter characters below current expansion level cap (e.g. level 80 from old expansions)
+      if (char.level && char.level < levelCap) {
+        skippedLowLevelCount++;
+        continue;
+      }
+
       runsProcessed++;
       const charName = char.name.trim();
       const realmName = char.realm.name ? char.realm.name.trim() : char.realm.slug;
@@ -171,6 +186,9 @@ async function scanRaiderIoPages(registry, options = {}) {
   return {
     newPlayersCount,
     updatedPlayersCount,
+    skippedLowLevel: skippedLowLevelCount,
+    season,
+    levelCap,
     lastScannedPage,
     nextPage: registry.lastScannedPage || 0,
     charactersProcessed: runsProcessed,
@@ -182,5 +200,10 @@ async function scanRaiderIoPages(registry, options = {}) {
 module.exports = {
   scanRaiderIoPages,
   cleanRealmSlug,
-  CURRENT_SEASON,
+  detectCurrentSeason,
+  getCurrentSeason,
+  getCurrentLevelCap,
+  FALLBACK_SEASON,
+  FALLBACK_LEVEL_CAP,
+  get CURRENT_SEASON() { return getCurrentSeason(); }
 };

@@ -6,6 +6,210 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const IS_CLOUD = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
   const R2_BASE = 'https://r2.imongmama.online';
+  let CURRENT_SEASON = 'season-mn-2';
+  let CURRENT_SEASON_NAME = 'MN Season 2';
+  let CURRENT_LEVEL_CAP = 90;
+  let CURRENT_EXPANSION_ID = 11;
+  let SEASON_DETECTION_SOURCE = 'fallback'; // 'auto' | 'override' | 'fallback'
+
+  // Dynamic Season & Level Cap Auto-Detection
+  async function detectSeasonAndLevelCap(forceRefresh = false) {
+    const overrideSeason = (localStorage.getItem('pf_season_override') || '').trim();
+    const overrideLevelCapStr = (localStorage.getItem('pf_level_cap_override') || '').trim();
+    const overrideLevelCap = overrideLevelCapStr ? parseInt(overrideLevelCapStr, 10) : null;
+
+    if (overrideSeason) {
+      CURRENT_SEASON = overrideSeason;
+      CURRENT_SEASON_NAME = `${overrideSeason} (Manual Override)`;
+      SEASON_DETECTION_SOURCE = 'override';
+    }
+    if (overrideLevelCap && !isNaN(overrideLevelCap)) {
+      CURRENT_LEVEL_CAP = overrideLevelCap;
+    }
+
+    if (!overrideSeason || !overrideLevelCap) {
+      // Check cached detection in localStorage (valid for 6 hours)
+      const cachedStr = localStorage.getItem('pf_detected_season_data');
+      if (!forceRefresh && cachedStr) {
+        try {
+          const cached = JSON.parse(cachedStr);
+          if (cached && (Date.now() - (cached.detectedAt || 0) < 6 * 60 * 60 * 1000)) {
+            if (!overrideSeason) {
+              CURRENT_SEASON = cached.slug || CURRENT_SEASON;
+              CURRENT_SEASON_NAME = cached.name || CURRENT_SEASON_NAME;
+            }
+            if (!overrideLevelCap) {
+              CURRENT_LEVEL_CAP = cached.levelCap || CURRENT_LEVEL_CAP;
+            }
+            CURRENT_EXPANSION_ID = cached.expansionId || CURRENT_EXPANSION_ID;
+            SEASON_DETECTION_SOURCE = overrideSeason ? 'override' : 'auto';
+            updateSeasonUI();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      // Try local backend API if available
+      if (!IS_CLOUD) {
+        try {
+          const res = await fetch(`/api/season${forceRefresh ? '?refresh=true' : ''}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ok && data.season) {
+              if (!overrideSeason) {
+                CURRENT_SEASON = data.season.slug;
+                CURRENT_SEASON_NAME = data.season.name;
+              }
+              if (!overrideLevelCap) {
+                CURRENT_LEVEL_CAP = data.season.levelCap;
+              }
+              CURRENT_EXPANSION_ID = data.season.expansionId;
+              SEASON_DETECTION_SOURCE = overrideSeason ? 'override' : 'auto';
+              localStorage.setItem('pf_detected_season_data', JSON.stringify({
+                slug: data.season.slug,
+                name: data.season.name,
+                expansionId: data.season.expansionId,
+                levelCap: data.season.levelCap,
+                detectedAt: Date.now()
+              }));
+              updateSeasonUI();
+              return;
+            }
+          }
+        } catch (err) {}
+      }
+
+      // Dynamic auto-detection via Raider.IO static-data API
+      try {
+        const now = new Date();
+        for (let exp = 15; exp >= 10; exp--) {
+          try {
+            const res = await fetch(`https://raider.io/api/v1/mythic-plus/static-data?expansion_id=${exp}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            const seasons = data.seasons || [];
+            if (!seasons.length) continue;
+
+            const active = seasons.find(s => {
+              if (!s.is_main_season) return false;
+              const startStr = s.starts?.us || s.starts;
+              if (!startStr) return false;
+              const start = new Date(startStr);
+              const endStr = s.ends?.us || s.ends;
+              const end = endStr ? new Date(endStr) : new Date('2099-01-01');
+              return start <= now && end > now;
+            });
+
+            if (active) {
+              let detectedCap = exp >= 10 ? 80 + (exp - 10) * 10 : 90;
+              try {
+                const rankRes = await fetch(`https://raider.io/api/mythic-plus/rankings/characters?region=us&season=${active.slug}&class=all&role=all&page=0`);
+                if (rankRes.ok) {
+                  const rankData = await rankRes.json();
+                  const firstChar = rankData.rankings?.rankedCharacters?.[0]?.character;
+                  if (firstChar && typeof firstChar.level === 'number' && firstChar.level > 0) {
+                    detectedCap = firstChar.level;
+                  }
+                }
+              } catch (e) {}
+
+              if (!overrideSeason) {
+                CURRENT_SEASON = active.slug;
+                CURRENT_SEASON_NAME = active.name || active.slug;
+              }
+              if (!overrideLevelCap) {
+                CURRENT_LEVEL_CAP = detectedCap;
+              }
+              CURRENT_EXPANSION_ID = exp;
+              SEASON_DETECTION_SOURCE = overrideSeason ? 'override' : 'auto';
+
+              localStorage.setItem('pf_detected_season_data', JSON.stringify({
+                slug: active.slug,
+                name: active.name || active.slug,
+                expansionId: exp,
+                levelCap: detectedCap,
+                detectedAt: Date.now()
+              }));
+              break;
+            }
+          } catch (e) {}
+        }
+      } catch (err) {
+        console.warn('[SeasonDetector] Browser auto-detection fallback:', err);
+      }
+    }
+
+    updateSeasonUI();
+  }
+
+  function updateSeasonUI() {
+    const displaySlug = document.getElementById('displaySeasonSlug');
+    const displayName = document.getElementById('displaySeasonName');
+    const displayCap = document.getElementById('displayLevelCap');
+    const displayCapFilter = document.getElementById('displayLevelCapFilter');
+    const badge = document.getElementById('seasonStatusBadge');
+    const overrideSeasonInput = document.getElementById('cfgSeasonOverride');
+    const overrideCapInput = document.getElementById('cfgLevelCapOverride');
+
+    if (displaySlug) displaySlug.textContent = CURRENT_SEASON;
+    if (displayName) displayName.textContent = `(${CURRENT_SEASON_NAME})`;
+    if (displayCap) displayCap.textContent = CURRENT_LEVEL_CAP;
+    if (displayCapFilter) displayCapFilter.textContent = CURRENT_LEVEL_CAP;
+
+    if (badge) {
+      if (SEASON_DETECTION_SOURCE === 'override') {
+        badge.textContent = 'Manual Override';
+        badge.className = 'badge badge-amber';
+      } else if (SEASON_DETECTION_SOURCE === 'auto') {
+        badge.textContent = 'Auto-Detected (Live)';
+        badge.className = 'badge badge-cyan';
+      } else {
+        badge.textContent = 'Fallback';
+        badge.className = 'badge badge-slate';
+      }
+    }
+
+    if (overrideSeasonInput && !overrideSeasonInput.dataset.initialized) {
+      overrideSeasonInput.dataset.initialized = 'true';
+      overrideSeasonInput.value = localStorage.getItem('pf_season_override') || '';
+      overrideSeasonInput.addEventListener('input', () => {
+        const val = overrideSeasonInput.value.trim();
+        if (val) {
+          localStorage.setItem('pf_season_override', val);
+        } else {
+          localStorage.removeItem('pf_season_override');
+        }
+        detectSeasonAndLevelCap(false);
+      });
+    }
+
+    if (overrideCapInput && !overrideCapInput.dataset.initialized) {
+      overrideCapInput.dataset.initialized = 'true';
+      overrideCapInput.value = localStorage.getItem('pf_level_cap_override') || '';
+      overrideCapInput.addEventListener('input', () => {
+        const val = overrideCapInput.value.trim();
+        if (val) {
+          localStorage.setItem('pf_level_cap_override', val);
+        } else {
+          localStorage.removeItem('pf_level_cap_override');
+        }
+        detectSeasonAndLevelCap(false);
+      });
+    }
+
+    const btnDetect = document.getElementById('btnDetectSeason');
+    if (btnDetect && !btnDetect.dataset.initialized) {
+      btnDetect.dataset.initialized = 'true';
+      btnDetect.addEventListener('click', async () => {
+        btnDetect.disabled = true;
+        btnDetect.innerHTML = '<i class="icon-refresh spinning"></i> Detecting...';
+        await detectSeasonAndLevelCap(true);
+        btnDetect.disabled = false;
+        btnDetect.innerHTML = '<i class="icon-refresh"></i> Auto-Detect Now';
+        appendLog('success', `[Season] Detected retail season "${CURRENT_SEASON}" (${CURRENT_SEASON_NAME}), Level Cap: ${CURRENT_LEVEL_CAP}`);
+      });
+    }
+  }
 
   // Navigation Tabs
   const tabBtns = document.querySelectorAll('.nav-btn');
@@ -431,6 +635,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pane) pane.classList.add('active');
       if (targetId === 'tab-analytics' && rawRealmsData) {
         renderAnalyticsGrid(rawRealmsData);
+      }
+      if (targetId === 'tab-settings') {
+        updateSeasonUI();
       }
     });
   });
@@ -1535,7 +1742,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Resilient Raider.IO Rankings fetcher (Origin Proxy -> Cloudflare CDN Proxy -> Direct)
   async function fetchRaiderIoRankings(region, page) {
-    const rioPath = `mythic-plus/rankings/characters?region=${region}&season=season-tww-2&class=all&role=all&page=${page}`;
+    const rioPath = `mythic-plus/rankings/characters?region=${region}&season=${CURRENT_SEASON}&class=all&role=all&page=${page}`;
     const directUrl = `https://raider.io/api/${rioPath}`;
     let res = null;
     let lastErr = null;
@@ -2160,9 +2367,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           const data = await fetchRaiderIoRankings(region, currentPage);
           const rankings = data.rankings?.rankedCharacters || data.rankings?.ranking?.records || (Array.isArray(data.rankings) ? data.rankings : []);
           let newChars = 0;
+          let skippedLowLevel = 0;
           rankings.forEach(item => {
             const c = item.character || item;
             if (!c || !c.name) return;
+
+            // Strict level cap filtering: characters below max level cap are skipped
+            const charLevel = c.level || 0;
+            if (charLevel > 0 && charLevel < CURRENT_LEVEL_CAP) {
+              skippedLowLevel++;
+              return;
+            }
+
             const role = (c.spec && (c.spec.name === 'Blood' || c.spec.name === 'Protection' || c.spec.name === 'Guardian' || c.spec.name === 'Brewmaster' || c.spec.name === 'Vengeance')) ? 'Tank' : ((c.spec && (c.spec.name === 'Restoration' || c.spec.name === 'Holy' || c.spec.name === 'Mistweaver' || c.spec.name === 'Preservation' || c.spec.name === 'Discipline')) ? 'Healer' : 'DPS');
             const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
             const pObj = {
@@ -2173,7 +2389,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               class: c.class?.name || 'Warrior',
               spec: c.spec?.name || 'Arms',
               role,
-              rioScore: Math.round((item.score || c.score || 3500) * 10) / 10,
+              rioScore: Math.round((item.score || c.score || 0) * 10) / 10,
               median: 0,
               metric,
               dungeons: Array.isArray(item.runs) ? item.runs.length : 8,
@@ -2195,7 +2411,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const endRank = (currentPage + 1) * 100;
           liveEnrichedCounter += newChars;
           if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
-          appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added. Database: ${playerDatabase.length.toLocaleString()} players.`);
+          appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added${skippedLowLevel > 0 ? ` (${skippedLowLevel} sub-level-${CURRENT_LEVEL_CAP} skipped)` : ''}. Database: ${playerDatabase.length.toLocaleString()} players.`);
 
           if (newChars > 0) {
             const total = playerDatabase.length;
@@ -2979,6 +3195,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Initial Boot
+  await detectSeasonAndLevelCap().catch(() => {});
   await loadRealms();
   await loadHarvestPlayers();
   await fetchHarvestStatus();
@@ -2988,5 +3205,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadSecretsFromSupabase();
   }
   fetchLiveWclRateLimit().catch(() => {});
-  appendLog('info', 'PartyFinder Studio v2 ready: Hybrid Raider.IO Discovery & WCL Combat Parse Engine active.');
+  appendLog('info', `PartyFinder Studio v2 ready: Season ${CURRENT_SEASON} (${CURRENT_SEASON_NAME}), Level Cap: ${CURRENT_LEVEL_CAP}.`);
 });
