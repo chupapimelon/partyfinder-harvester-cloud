@@ -442,9 +442,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               isManualSweepActive = true;
               isManualSweepPaused = !!mJob.paused;
               activeManualMode = mJob.mode || activeManualMode;
-              liveEnrichedCounter = mJob.countThisRun || 0;
-              if (mJob.page !== undefined && mJob.page > 0) {
-                cloudSweepPage = mJob.page;
+              liveEnrichedCounter = Math.max(liveEnrichedCounter, mJob.countThisRun || 0);
+              if (!cloudSweepRunning && mJob.page !== undefined && mJob.page > 0) {
+                cloudSweepPage = Math.max(cloudSweepPage, mJob.page);
               }
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
@@ -740,8 +740,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
               btnStopJob.disabled = false;
 
-              // If opening tab (e.g. in incognito) while sweep is running in cloud, resume client animations if open
-              if (IS_CLOUD && !cloudSweepRunning && !aj.paused) {
+              // If opening tab while sweep is running in cloud, resume runner on active control client only
+              if (IS_CLOUD && !IS_VIEW_ONLY && !cloudSweepRunning && !aj.paused && aj.running) {
                 runCloudManualSweep(activeManualMode, aj.region || currentActiveRegion || 'us');
               }
             } else if (isManualSweepActive && (!aj || !aj.running)) {
@@ -2630,7 +2630,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let cloudSweepPage = 0;
 
   async function runCloudManualSweep(mode, region) {
+    if (cloudSweepRunning || IS_VIEW_ONLY) return;
     cloudSweepRunning = true;
+    try {
     while (isManualSweepActive) {
       while (isManualSweepPaused && isManualSweepActive) {
         await new Promise(r => setTimeout(r, 250));
@@ -2752,7 +2754,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               persistManualJobState(savedManualJobState);
             }
           }
-          appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added${skippedLowLevel > 0 ? ` (${skippedLowLevel} sub-level-${CURRENT_LEVEL_CAP} skipped)` : ''}. Database: ${playerDatabase.length.toLocaleString()} players.`);
+          if (newChars > 0) {
+            appendLog('success', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): +${newChars} newly added${skippedLowLevel > 0 ? ` (${skippedLowLevel} sub-level-${CURRENT_LEVEL_CAP} skipped)` : ''}. Database: ${playerDatabase.length.toLocaleString()} players.`);
+          } else {
+            appendLog('info', `[Raider.IO] Scanned ranks #${startRank}-#${endRank} (Page ${currentPage}): Verified ${rankings.length} characters (all ${playerDatabase.length.toLocaleString()} pushers already tracked in database).`);
+          }
 
           updateTelemetryHUD();
         }
@@ -2762,6 +2768,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       await new Promise(r => setTimeout(r, 1000));
+    }
+    } finally {
+      cloudSweepRunning = false;
     }
 
     isManualSweepActive = false;
