@@ -407,6 +407,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               isManualSweepPaused = !!mJob.paused;
               activeManualMode = mJob.mode || activeManualMode;
               liveEnrichedCounter = mJob.countThisRun || 0;
+              if (mJob.page !== undefined && mJob.page > 0) {
+                cloudSweepPage = mJob.page;
+              }
               if (livePlayerCounter) {
                 livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
               }
@@ -2129,12 +2132,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         appendLog('info', `[24/7 Auto-Pilot] All current pushers enriched! Scanning Raider.IO Mythic+ leaderboards for new pushers...`);
         try {
           const reg = (currentActiveRegion || 'US').toLowerCase();
+          if (cloudCrawlerPage === 0 && Array.isArray(playerDatabase) && playerDatabase.length >= 100) {
+            cloudCrawlerPage = Math.floor(playerDatabase.length / 100);
+          }
           const page = cloudCrawlerPage;
-          cloudCrawlerPage = (cloudCrawlerPage + 1) % 50;
+          cloudCrawlerPage++;
 
           const rioData = await fetchRaiderIoRankings(reg, page);
           if (rioData) {
             const rankings = rioData.rankings?.rankedCharacters || rioData.rankings?.ranking?.records || (Array.isArray(rioData.rankings) ? rioData.rankings : []);
+            if (!rankings || rankings.length === 0) {
+              appendLog('info', `[24/7 Auto-Pilot] Reached end of active Raider.IO rankings at Page ${page}. Resetting pointer to Page 0.`);
+              cloudCrawlerPage = 0;
+            }
             let addedCount = 0;
 
             rankings.forEach(item => {
@@ -2454,6 +2464,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnResetProgress = document.getElementById('btnResetProgress');
   if (btnResetProgress) {
     btnResetProgress.addEventListener('click', async () => {
+      cloudSweepPage = 0;
+      cloudCrawlerPage = 0;
+      if (savedManualJobState) {
+        savedManualJobState.page = 0;
+        await persistManualJobState(savedManualJobState);
+      }
       const region = (currentActiveRegion || 'US').toLowerCase();
       try {
         const res = await fetch(`/api/harvest/raiderio/reset-progress?region=${region}`, { method: 'POST' });
@@ -2519,11 +2535,26 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         } else {
           // Raider.IO sweep using authentic characters rankings endpoint
+          if (cloudSweepPage === 0 && savedManualJobState?.page !== undefined && savedManualJobState.page > 0) {
+            cloudSweepPage = savedManualJobState.page;
+          } else if (cloudSweepPage === 0 && Array.isArray(playerDatabase) && playerDatabase.length >= 100) {
+            cloudSweepPage = Math.floor(playerDatabase.length / 100);
+          }
           const currentPage = cloudSweepPage;
-          cloudSweepPage = (cloudSweepPage + 1) % 50;
+          cloudSweepPage++;
 
           const data = await fetchRaiderIoRankings(region, currentPage);
           const rankings = data.rankings?.rankedCharacters || data.rankings?.ranking?.records || (Array.isArray(data.rankings) ? data.rankings : []);
+
+          if (!rankings || rankings.length === 0) {
+            appendLog('info', `[Raider.IO] Reached the end of active leaderboard at Page ${currentPage} (${playerDatabase.length.toLocaleString()} total pushers). Pointer reset to Rank #1.`);
+            cloudSweepPage = 0;
+            if (savedManualJobState) {
+              savedManualJobState.page = 0;
+              persistManualJobState(savedManualJobState);
+            }
+            break;
+          }
           let newChars = 0;
           let skippedLowLevel = 0;
           rankings.forEach(item => {
@@ -2571,6 +2602,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (livePlayerCounter) livePlayerCounter.textContent = `${liveEnrichedCounter.toLocaleString()} this run`;
           if (savedManualJobState) {
             savedManualJobState.countThisRun = liveEnrichedCounter;
+            savedManualJobState.page = cloudSweepPage;
             if (Date.now() - lastJobPersistTime > 4000) {
               lastJobPersistTime = Date.now();
               persistManualJobState(savedManualJobState);
@@ -2670,11 +2702,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnStopJob.disabled = false;
 
     if (IS_CLOUD) {
+      const startPage = (savedManualJobState?.page !== undefined && savedManualJobState.page > 0)
+        ? savedManualJobState.page
+        : (Array.isArray(playerDatabase) && playerDatabase.length >= 100 ? Math.floor(playerDatabase.length / 100) : 0);
+      cloudSweepPage = startPage;
       const jobState = {
         running: true,
         paused: false,
         mode: activeManualMode,
         region: region,
+        page: startPage,
         countThisRun: 0,
         startedAt: Date.now()
       };
@@ -2683,7 +2720,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       await persistHarvesterStatus('running');
       triggerCloudHarvesterDispatch(true);
 
-      appendLog('info', `[Cloud Engine] Initiating persistent live ${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'} for [${region.toUpperCase()}] pushers... (Persists across tab close & incognito)`);
+      appendLog('info', `[Cloud Engine] Initiating persistent live ${activeManualMode === 'wcl' ? 'WCL Parse Enrichment' : 'Raider.IO Roster Sweep'} starting at Page ${startPage} (Ranks #${(startPage * 100) + 1}+) for [${region.toUpperCase()}] pushers... (Persists across tab close & incognito)`);
       runCloudManualSweep(activeManualMode, region);
       return;
     }
