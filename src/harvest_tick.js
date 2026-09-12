@@ -141,15 +141,29 @@ async function main() {
     const isPlatinum = detectedLimit >= 18000;
 
     // Adaptive parameters:
-    // Platinum (18k pts/hr): 10 micro-cycles of 50 players each (500 players per tick = ~6,000-7,200/hr) with 2s wait
+    // Platinum (18k pts/hr): 10 micro-cycles of 80 players each (~800 players/tick) with 2s wait
     // Free/Standard (3.6k pts/hr): 5 micro-cycles of 10 players each (50 players per tick = ~600/hr) with 48s wait
     const TOTAL_CYCLES = isPlatinum ? 10 : 5;
-    const CYCLE_BATCH_SIZE = isPlatinum ? 50 : 10;
+    const CYCLE_BATCH_SIZE = isPlatinum ? 80 : 10;
     const CYCLE_WAIT_MS = isPlatinum ? 2000 : 48000;
     const tierName = isPlatinum ? 'PLATINUM TURBO (18k pts/hr)' : 'FREE / STANDARD SAFE (3.6k pts/hr)';
 
-    console.log(`[Pacing Engine] Active Tier: ${tierName} | Limit: ${detectedLimit.toLocaleString()} pts/hr | Batch: ${CYCLE_BATCH_SIZE} | Wait: ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s`);
-    logs.push(makeLog('info', `[Pacing Engine] Live Tier: ${tierName} (${detectedLimit.toLocaleString()} pts/hr) -> Target batch: ${CYCLE_BATCH_SIZE} players/cycle.`));
+    let currentWclRateLimit = liveRateLimit;
+    let wclQuotaExhausted = false;
+
+    if (currentWclRateLimit) {
+      const initialSpent = Number(currentWclRateLimit.pointsSpentThisHour) || 0;
+      const initialLimit = Number(currentWclRateLimit.limitPerHour) || detectedLimit;
+      if (initialSpent >= (initialLimit - 400)) {
+        wclQuotaExhausted = true;
+        const resetMins = Math.ceil((Number(currentWclRateLimit.pointsResetIn) || 3600) / 60);
+        console.log(`[Dual-Engine] Hourly WCL quota reached (${initialSpent.toLocaleString()}/${initialLimit.toLocaleString()} pts). Auto-routing downtime into Raider.IO Discovery Scraping (${resetMins}m until reset). Zero downtime!`);
+        logs.push(makeLog('info', `[Dual-Engine] WCL hourly quota reached (${initialSpent.toLocaleString()} pts). Auto-routing downtime into Raider.IO Discovery Scraping (${resetMins}m until reset). Zero downtime!`));
+      }
+    }
+
+    console.log(`[Pacing Engine] Active Tier: ${tierName} | Limit: ${detectedLimit.toLocaleString()} pts/hr | Batch: ${CYCLE_BATCH_SIZE} | Wait: ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s | Quota Exhausted: ${wclQuotaExhausted}`);
+    logs.push(makeLog('info', `[Pacing Engine] Live Tier: ${tierName} (${detectedLimit.toLocaleString()} pts/hr) -> ${wclQuotaExhausted ? 'Scraping Raider.IO Leaderboards (WCL downtime)' : 'Enriching with WCL Turbo'}.`));
 
     let accumulatedEnrichedThisTick = 0;
     let accumulatedNewThisTick = 0;
@@ -184,11 +198,12 @@ async function main() {
       const curEnriched = Object.values(registry.players).filter(p => p.enriched).length;
       const curPending = curTotal - curEnriched;
 
-      // Determine operating mode: If manual override is active, force that mode
+      // Determine operating mode: If manual override is active, force that mode.
+      // Otherwise, if WCL quota is exhausted, seamlessly pivot into Raider.IO Discovery Scraping!
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
-      const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds ? 'wcl' : 'raiderio');
+      const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds && !wclQuotaExhausted ? 'wcl' : 'raiderio');
 
-      if (targetMode === 'wcl' && curPending > 0 && hasWclCreds) {
+      if (targetMode === 'wcl' && curPending > 0 && hasWclCreds && !wclQuotaExhausted) {
         console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (${isPlatinum ? 'Turbo' : 'Safe 10/min'})...`);
         logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching ${CYCLE_BATCH_SIZE} players...`));
 
@@ -200,6 +215,19 @@ async function main() {
           clientSecret: wclClientSecret,
           fastMode: isPlatinum,
         });
+
+        if (result.rateLimit) {
+          currentWclRateLimit = result.rateLimit;
+        }
+
+        const currentSpent = Number(currentWclRateLimit?.pointsSpentThisHour) || 0;
+        const currentLimit = Number(currentWclRateLimit?.limitPerHour) || detectedLimit;
+        if (result.rateLimitExhausted || currentSpent >= (currentLimit - 400)) {
+          wclQuotaExhausted = true;
+          const resetMins = Math.ceil((Number(currentWclRateLimit?.pointsResetIn) || 60) / 60);
+          console.log(`[Dual-Engine] Hourly WCL ceiling reached (${currentSpent.toLocaleString()}/${currentLimit.toLocaleString()} pts). Auto-routing remaining cycles to Raider.IO Discovery Scraping (${resetMins}m until reset)!`);
+          logs.push(makeLog('warn', `[Dual-Engine] Hourly WCL ceiling reached (${currentSpent.toLocaleString()} pts). Auto-routing remaining cycles to Raider.IO Discovery Scraping (${resetMins}m until reset)! Zero downtime.`));
+        }
 
         if (result.enrichedCount > 0) {
           accumulatedEnrichedThisTick += result.enrichedCount;
@@ -333,21 +361,21 @@ async function main() {
       const currentEnrichedTotal = Object.values(registry.players).filter(p => p.enriched).length;
       const currentPendingTotal = Object.keys(registry.players).length - currentEnrichedTotal;
       const statusData = {
-        mode: lastTickResult.mode || targetMode || 'wcl',
+        mode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
         lastTickAt: new Date().toISOString(),
         lastTickResult: lastTickResult,
         recentEnriched: allRecentEnriched,
         recentDiscovered: allRecentDiscovered,
         lastScannedPage: registry.lastScannedPage || 0,
         totalPlayers: Object.keys(registry.players).length,
-        rateLimit: lastTickResult.rateLimit || null,
+        rateLimit: currentWclRateLimit || lastTickResult.rateLimit || liveRateLimit || null,
         logs: logs.slice(-30),
         running: true,
         paused: false,
         activeJob: manualJob && manualJob.running ? manualJob : {
           running: true,
           paused: false,
-          mode: lastTickResult.mode || targetMode || 'wcl',
+          mode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
           region,
           countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? (initialCountThisRun + accumulatedEnrichedThisTick) : (initialCountThisRun + accumulatedNewThisTick),
           page: registry.lastScannedPage || 0
@@ -364,28 +392,19 @@ async function main() {
           enrichedPlayers: currentEnrichedTotal,
           pendingEnrichment: currentPendingTotal,
           lastTickAt: new Date().toISOString(),
-          lastTickMode: lastTickResult.mode || targetMode || 'wcl',
+          lastTickMode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
         };
         await sb.setState('progress', progress);
       } catch (e) {}
 
       // Wait between micro-cycles: Dynamic adaptive pacing
       if (cycle < TOTAL_CYCLES - 1) {
-        if (targetMode === 'wcl') {
-          // Dynamic safety ceiling check: back off if approaching limit
-          const currentSpent = lastTickResult.rateLimit?.pointsSpentThisHour || 0;
-          const currentLimit = lastTickResult.rateLimit?.limitPerHour || detectedLimit;
-          if (currentSpent > (currentLimit - 400)) {
-            const resetIn = lastTickResult.rateLimit?.pointsResetIn || 60;
-            console.warn(`[WCL Guard] Approaching hourly ceiling (${currentSpent}/${currentLimit}). Pausing for ${resetIn}s.`);
-            logs.push(makeLog('warn', `[WCL Guard] Approaching hourly ceiling (${currentSpent}/${currentLimit}). Pausing for reset.`));
-            break;
-          }
-          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s for next batch...`);
+        if (targetMode === 'wcl' && !wclQuotaExhausted) {
+          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Waiting ${(CYCLE_WAIT_MS / 1000).toFixed(1)}s for next WCL batch...`);
           await new Promise(r => setTimeout(r, CYCLE_WAIT_MS));
         } else {
-          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Discovery batch complete. Next batch in 2s...`);
-          await new Promise(r => setTimeout(r, 2000));
+          console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Discovery batch complete. Next batch in 1.5s...`);
+          await new Promise(r => setTimeout(r, 1500));
         }
       }
     }
@@ -393,21 +412,21 @@ async function main() {
     // 5. Regenerate static API pages for top 20 pages
     console.log('[PageGen] Regenerating top static API pages...');
     const finalStatus = {
-      mode: lastTickResult.mode || (manualJob && manualJob.running ? manualJob.mode : 'idle'),
+      mode: lastTickResult.mode || (manualJob && manualJob.running ? manualJob.mode : (wclQuotaExhausted ? 'raiderio' : 'idle')),
       lastTickAt: new Date().toISOString(),
       lastTickResult: lastTickResult,
       recentEnriched: allRecentEnriched,
       recentDiscovered: allRecentDiscovered,
       lastScannedPage: registry.lastScannedPage || 0,
       totalPlayers: Object.keys(registry.players).length,
-      rateLimit: lastTickResult.rateLimit || null,
+      rateLimit: currentWclRateLimit || lastTickResult.rateLimit || liveRateLimit || null,
       logs: logs.slice(-30),
       running: true,
       paused: false,
       activeJob: manualJob && manualJob.running ? manualJob : {
         running: true,
         paused: false,
-        mode: lastTickResult.mode || targetMode || 'wcl',
+        mode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
         region,
         countThisRun: (lastTickResult.mode === 'wcl' || targetMode === 'wcl') ? (initialCountThisRun + accumulatedEnrichedThisTick) : (initialCountThisRun + accumulatedNewThisTick),
         page: registry.lastScannedPage || 0

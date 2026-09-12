@@ -94,6 +94,7 @@ async function enrichBatch(registry, options = {}) {
   const targetBatch = unEnriched.slice(0, batchSize);
   const token = await getWclAccessToken(options.clientId, options.clientSecret);
   const enrichedResults = [];
+  let rateLimitExhausted = false;
 
   for (const player of targetBatch) {
     const cleanSlug = (player.realmSlug || player.realm || '')
@@ -137,7 +138,8 @@ async function enrichBatch(registry, options = {}) {
       if (!res.ok) {
         console.warn(`[WCL] HTTP ${res.status} for ${playerKey}`);
         if (res.status === 429) {
-          console.warn('[WCL] Rate limit 429 — stopping batch.');
+          console.warn('[WCL] Rate limit 429 — hourly quota exhausted.');
+          rateLimitExhausted = true;
           break;
         }
         continue;
@@ -146,6 +148,11 @@ async function enrichBatch(registry, options = {}) {
       const qData = await res.json();
       if (qData.data?.rateLimitData) {
         latestRateLimit = qData.data.rateLimitData;
+        if (latestRateLimit.pointsSpentThisHour >= (latestRateLimit.limitPerHour - 300)) {
+          console.warn(`[WCL] Safe ceiling reached: ${latestRateLimit.pointsSpentThisHour}/${latestRateLimit.limitPerHour} pts.`);
+          rateLimitExhausted = true;
+          break;
+        }
       }
 
       if (qData.errors && qData.errors.length > 0) {
@@ -204,6 +211,7 @@ async function enrichBatch(registry, options = {}) {
     remainingInQueue: unEnriched.length - enrichedResults.length,
     enrichedPlayers: enrichedResults,
     rateLimit: latestRateLimit,
+    rateLimitExhausted,
   };
 }
 
