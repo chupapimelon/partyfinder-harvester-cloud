@@ -90,9 +90,15 @@ async function compileDatabase() {
     if (!regionalBreakdown[pRegion]) regionalBreakdown[pRegion] = {};
     regionalBreakdown[pRegion][subReg] = (regionalBreakdown[pRegion][subReg] || 0) + 1;
 
+    // Keep 100% of enriched Warcraft Logs parses + active keystone pushers
+    // Ensures file stays comfortably under Cloudflare Pages 25 MiB hard asset limit
+    const isEnriched = p.enriched || (p.wcl && (p.wcl.bestParse > 0 || p.wcl.medianParse > 0));
+    const hasActiveDepth = (p.highestKey && p.highestKey >= 4) || (p.rioScore && p.rioScore >= 800);
+    if (!isEnriched && !hasActiveDepth) continue;
+
     const packed = packRecord(p);
     const pKey = `${p.name.toLowerCase()}-${(p.realmSlug || realmClean).replace(/[^a-z0-9]/g, '')}`;
-    playerLines.push(`        P["${pKey}"] = ${packed};`);
+    playerLines.push(`P["${pKey}"] = ${packed};`);
   }
 
   const now = new Date();
@@ -242,7 +248,17 @@ async function main() {
     if (!compiled) throw new Error('Compilation returned null');
     console.log(`[Compiler] Done: ${compiled.stats.totalPlayers} players, ${compiled.stats.fileSizeMb} MB`);
 
-    // 2. Push Lua file to GitHub
+    // 2. Upload directly to Cloudflare R2 bucket
+    try {
+      console.log('[R2] Uploading PartyFinder_Data_Live.lua and partyfinder_meta.json directly to R2...');
+      await r2.putRaw('data/PartyFinder_Data_Live.lua', compiled.luaContent, 'text/plain; charset=utf-8');
+      await r2.putRaw('data/partyfinder_meta.json', compiled.metaContent, 'application/json; charset=utf-8');
+      console.log('[R2] ✅ Directly uploaded to R2 bucket!');
+    } catch (r2Err) {
+      console.warn(`[R2] ⚠️ Direct R2 upload failed: ${r2Err.message}`);
+    }
+
+    // 3. Push Lua file to GitHub
     const ts = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
     const commitMsg = `chore(data): cloud auto-sync [${ts}] (${compiled.stats.totalPlayers} players, ${compiled.stats.enrichedPlayers} enriched)`;
 
