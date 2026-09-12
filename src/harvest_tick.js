@@ -171,6 +171,13 @@ async function main() {
     let allRecentDiscovered = [];
     let lastTickResult = {};
 
+    let currentEngineState = 'dual_engine';
+    let currentEngineStateLabel = 'DUAL-ENGINE';
+    let currentEngineStateDesc = 'Full autonomous dual-engine ready across all 247 US Realms.';
+    let currentCyclePhase = 'p1_mega';
+    let currentCyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
+    let currentPriorityStats = {};
+
     for (let cycle = 0; cycle < TOTAL_CYCLES; cycle++) {
       // Responsively check if user paused or stopped from dashboard
       try {
@@ -198,14 +205,68 @@ async function main() {
       const curEnriched = Object.values(registry.players).filter(p => p.enriched).length;
       const curPending = curTotal - curEnriched;
 
+      const allRegPlayers = Object.values(registry.players || {});
+      const p1Players = allRegPlayers.filter(p => p.realmPriority === 1 || p.isMega);
+      const p1EnrichedCount = p1Players.filter(p => p.enriched).length;
+      const p1PendingCount = Math.max(0, p1Players.length - p1EnrichedCount);
+      const maintenanceQueue = allRegPlayers.filter(p => p.needsReenrichment).length;
+      const p2p3Players = allRegPlayers.filter(p => (p.realmPriority > 1 || (!p.isMega && p.realmPriority !== 1)));
+      const p2p3EnrichedCount = p2p3Players.filter(p => p.enriched).length;
+
+      let cyclePhase = 'p1_mega';
+      let cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
+      let targetPriority = 1;
+
+      if (maintenanceQueue > 0) {
+        cyclePhase = 'maintenance';
+        cyclePhaseTitle = 'PHASE 2: MEGA REALMS MAINTENANCE (WEEKLY REFRESH)';
+        targetPriority = 'maintenance';
+      } else if (p1PendingCount > 0 && p1Players.length > 0) {
+        cyclePhase = 'p1_mega';
+        cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
+        targetPriority = 1;
+      } else {
+        cyclePhase = 'p2_p3';
+        cyclePhaseTitle = 'PHASE 3: MID & LOW REALMS (P2/P3) HARVESTING';
+        targetPriority = 'p2_p3';
+      }
+
       // Determine operating mode: If manual override is active, force that mode.
       // Otherwise, if WCL quota is exhausted, seamlessly pivot into Raider.IO Discovery Scraping!
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
       const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds && !wclQuotaExhausted ? 'wcl' : 'raiderio');
 
+      let engineState = 'dual_engine';
+      let engineStateLabel = 'DUAL-ENGINE';
+      let engineStateDesc = 'Full autonomous dual-engine ready across all 247 US Realms.';
+
+      if (targetMode === 'wcl' && !wclQuotaExhausted) {
+        engineState = 'wcl_turbo';
+        engineStateLabel = 'WCL TURBO';
+        engineStateDesc = 'Actively querying Warcraft Logs at Platinum speed (100–800 players/tick).';
+      } else if (wclQuotaExhausted || targetMode === 'raiderio') {
+        engineState = 'rio_crawler';
+        engineStateLabel = 'R.IO CRAWLER';
+        engineStateDesc = 'WCL 18k quota reached; actively crawling Raider.IO leaderboards until reset.';
+      }
+
+      currentCyclePhase = cyclePhase;
+      currentCyclePhaseTitle = cyclePhaseTitle;
+      currentEngineState = engineState;
+      currentEngineStateLabel = engineStateLabel;
+      currentEngineStateDesc = engineStateDesc;
+      currentPriorityStats = {
+        p1Total: p1Players.length,
+        p1Enriched: p1EnrichedCount,
+        p1Pending: p1PendingCount,
+        maintenanceQueue: maintenanceQueue,
+        p2p3Total: p2p3Players.length,
+        p2p3Enriched: p2p3EnrichedCount,
+      };
+
       if (targetMode === 'wcl' && curPending > 0 && hasWclCreds && !wclQuotaExhausted) {
-        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (${isPlatinum ? 'Turbo' : 'Safe 10/min'})...`);
-        logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES}: Enriching ${CYCLE_BATCH_SIZE} players...`));
+        console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] [${cyclePhaseTitle}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (${isPlatinum ? 'Turbo' : 'Safe 10/min'})...`);
+        logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES} [${cyclePhase}]: Enriching ${CYCLE_BATCH_SIZE} players...`));
 
         const result = await enrichBatch(registry, {
           region,
@@ -214,6 +275,7 @@ async function main() {
           clientId: wclClientId,
           clientSecret: wclClientSecret,
           fastMode: isPlatinum,
+          targetPriority,
         });
 
         if (result.rateLimit) {
@@ -362,6 +424,12 @@ async function main() {
       const currentPendingTotal = Object.keys(registry.players).length - currentEnrichedTotal;
       const statusData = {
         mode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
+        engineState: currentEngineState,
+        engineStateLabel: currentEngineStateLabel,
+        engineStateDesc: currentEngineStateDesc,
+        cyclePhase: currentCyclePhase,
+        cyclePhaseTitle: currentCyclePhaseTitle,
+        priorityStats: currentPriorityStats,
         lastTickAt: new Date().toISOString(),
         lastTickResult: lastTickResult,
         recentEnriched: allRecentEnriched,
@@ -393,6 +461,8 @@ async function main() {
           pendingEnrichment: currentPendingTotal,
           lastTickAt: new Date().toISOString(),
           lastTickMode: lastTickResult.mode || targetMode || (wclQuotaExhausted ? 'raiderio' : 'wcl'),
+          cyclePhase: currentCyclePhase,
+          engineState: currentEngineState,
         };
         await sb.setState('progress', progress);
       } catch (e) {}
@@ -413,6 +483,12 @@ async function main() {
     console.log('[PageGen] Regenerating top static API pages...');
     const finalStatus = {
       mode: lastTickResult.mode || (manualJob && manualJob.running ? manualJob.mode : (wclQuotaExhausted ? 'raiderio' : 'idle')),
+      engineState: currentEngineState,
+      engineStateLabel: currentEngineStateLabel,
+      engineStateDesc: currentEngineStateDesc,
+      cyclePhase: currentCyclePhase,
+      cyclePhaseTitle: currentCyclePhaseTitle,
+      priorityStats: currentPriorityStats,
       lastTickAt: new Date().toISOString(),
       lastTickResult: lastTickResult,
       recentEnriched: allRecentEnriched,

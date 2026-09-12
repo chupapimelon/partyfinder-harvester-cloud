@@ -657,7 +657,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingEnrichment: data.pendingEnrichment ?? Math.max(0, totalScraped - enrichedNum),
             running: savedHarvesterStatus === 'running',
             mode: data.mode || 'wcl',
+            engineState: data.engineState,
+            engineStateLabel: data.engineStateLabel,
+            engineStateDesc: data.engineStateDesc,
+            cyclePhase: data.cyclePhase,
+            cyclePhaseTitle: data.cyclePhaseTitle,
+            priorityStats: data.priorityStats,
             recentEnriched: data.recentEnriched || data.lastTickResult?.recentEnriched || [],
+            recentDiscovered: data.recentDiscovered || data.lastTickResult?.recentDiscovered || [],
             logs: data.logs || [],
             rateLimit: data.rateLimit || (currentWclRateLimit ? currentWclRateLimit : {
               limitPerHour: 18000,
@@ -967,22 +974,46 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function updateActiveEngineBadge(modeOverride = null) {
     if (!autoPilotRealmCount) return;
+    const statusEngine = latestHarvestStatus?.engineState;
     const mode = modeOverride || latestHarvestStatus?.mode || activeManualMode || 'dual';
+    const isRunning = savedHarvesterStatus === 'running' || isManualSweepActive || latestHarvestStatus?.running;
     const reg = (currentActiveRegion || 'US').toUpperCase();
     const rCount = rawRealmsData?.[reg]?.length || 247;
 
-    if (mode === 'wcl') {
+    // 3 User-Defined Engine States:
+    // 1. WCL Active -> WCL TURBO (Cyan)
+    // 2. WCL Downtime -> R.IO CRAWLER (Amber)
+    // 3. Standby / Autonomous -> DUAL-ENGINE (Emerald)
+    if (statusEngine === 'wcl_turbo' || (isRunning && mode === 'wcl')) {
       autoPilotRealmCount.textContent = 'WCL TURBO';
       autoPilotRealmCount.style.color = 'var(--cyan)';
-      autoPilotRealmCount.title = `Active Engine: Warcraft Logs Combat Parse Enricher • Coverage: ${rCount} ${reg} Realms`;
-    } else if (mode === 'raiderio') {
+      autoPilotRealmCount.title = latestHarvestStatus?.engineStateDesc || `Actively querying Warcraft Logs at Platinum speed (100–800 players/tick). Coverage: ${rCount} ${reg} Realms`;
+    } else if (statusEngine === 'rio_crawler' || (isRunning && mode === 'raiderio')) {
       autoPilotRealmCount.textContent = 'R.IO CRAWLER';
       autoPilotRealmCount.style.color = 'var(--amber)';
-      autoPilotRealmCount.title = `Active Engine: Raider.IO Leaderboard Discovery Scraper • Coverage: ${rCount} ${reg} Realms`;
+      autoPilotRealmCount.title = latestHarvestStatus?.engineStateDesc || `WCL 18k quota reached; actively crawling Raider.IO leaderboards until reset. Coverage: ${rCount} ${reg} Realms`;
     } else {
       autoPilotRealmCount.textContent = 'DUAL-ENGINE';
       autoPilotRealmCount.style.color = '#10b981';
-      autoPilotRealmCount.title = `Active Engine: Autonomous Dual-Engine (WCL + Raider.IO) • Coverage: ${rCount} ${reg} Realms`;
+      autoPilotRealmCount.title = latestHarvestStatus?.engineStateDesc || `Full autonomous dual-engine ready across all 247 US Realms.`;
+    }
+
+    if (autoPilotPhaseTitle && latestHarvestStatus?.cyclePhaseTitle) {
+      autoPilotPhaseTitle.textContent = latestHarvestStatus.cyclePhaseTitle;
+    }
+
+    if (autoPilotPhaseDetail && latestHarvestStatus?.cyclePhase) {
+      const stats = latestHarvestStatus.priorityStats;
+      if (latestHarvestStatus.cyclePhase === 'p1_mega') {
+        const statTxt = stats && stats.p1Total ? ` (${stats.p1Enriched.toLocaleString()} / ${stats.p1Total.toLocaleString()} enriched)` : '';
+        autoPilotPhaseDetail.textContent = `Phase 1 Active: Enriching Priority 1 Mega Realms across all 4 regions (US · EU · KR · TW)${statTxt}.`;
+      } else if (latestHarvestStatus.cyclePhase === 'maintenance') {
+        const queueTxt = stats ? `${stats.maintenanceQueue.toLocaleString()} players` : 'queued players';
+        autoPilotPhaseDetail.textContent = `Phase 2 Maintenance: Re-enriching ${queueTxt} who gained higher M+ score or completed higher keys.`;
+      } else if (latestHarvestStatus.cyclePhase === 'p2_p3') {
+        const statTxt = stats && stats.p2p3Total ? ` (${stats.p2p3Enriched.toLocaleString()} / ${stats.p2p3Total.toLocaleString()} enriched)` : '';
+        autoPilotPhaseDetail.textContent = `Phase 3 Active: Harvesting and enriching Priority 2 & 3 Mid/Low Realms across all 4 regions${statTxt}.`;
+      }
     }
   }
 

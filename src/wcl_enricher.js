@@ -4,6 +4,8 @@
  * Key difference: credentials from env vars or Supabase, operates on in-memory registry
  */
 
+const { isMegaRealm, getRealmPriority } = require('./realm_indexer');
+
 let cachedWclToken = null;
 let tokenExpiresAt = 0;
 
@@ -78,16 +80,34 @@ async function enrichBatch(registry, options = {}) {
   const batchSize = Math.min(parseInt(options.batchSize, 10) || 10, 100);
   const zoneId = options.zoneId || 55;
 
-  const unEnriched = Object.values(registry.players)
-    .filter(p => !p.enriched)
-    .sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+  const targetPriority = options.targetPriority || 1; // 1 = P1 Mega, 'maintenance' = changed pushers, 'p2_p3' = Mid/Low, 'all' = any
+
+  let candidatePlayers = [];
+  if (targetPriority === 'maintenance') {
+    candidatePlayers = Object.values(registry.players).filter(p => p.needsReenrichment);
+  } else if (targetPriority === 1) {
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm)));
+    // Fallback: If all P1 Mega Realm pushers are enriched, smoothly fall back to P2/P3 so quota is never wasted
+    if (candidatePlayers.length === 0) {
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+    }
+  } else if (targetPriority === 'p2_p3') {
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm))));
+    if (candidatePlayers.length === 0) {
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+    }
+  } else {
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+  }
+
+  const unEnriched = candidatePlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
 
   if (unEnriched.length === 0) {
     return {
       enrichedCount: 0,
       remainingInQueue: 0,
       enrichedPlayers: [],
-      message: 'No un-enriched players in queue.',
+      message: 'No un-enriched players in queue for active priority tier.',
     };
   }
 
@@ -184,6 +204,7 @@ async function enrichBatch(registry, options = {}) {
 
       // Update player record in-place
       player.enriched = true;
+      player.needsReenrichment = false;
       player.lastEnrichedAt = Date.now();
       player.wcl = {
         characterId: charData?.id || null,

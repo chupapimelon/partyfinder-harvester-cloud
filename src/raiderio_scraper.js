@@ -11,16 +11,7 @@ const {
   FALLBACK_SEASON,
   FALLBACK_LEVEL_CAP
 } = require('./season_detector');
-
-function cleanRealmSlug(realm) {
-  if (!realm) return '';
-  return String(realm)
-    .trim()
-    .toLowerCase()
-    .replace(/['']/g, '')
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9-]/g, '');
-}
+const { getRealmPriority, isMegaRealm, cleanRealmSlug } = require('./realm_indexer');
 
 /**
  * Scan Raider.IO M+ leaderboards and add new players to the registry
@@ -142,6 +133,9 @@ async function scanRaiderIoPages(registry, options = {}) {
         }
       }
 
+      const rPrio = getRealmPriority(region, realmSlug || realmName);
+      const isMega = rPrio === 1;
+
       if (!registry.players[playerKey]) {
         newPlayersCount++;
         const pObj = {
@@ -149,6 +143,8 @@ async function scanRaiderIoPages(registry, options = {}) {
           realm: realmName,
           realmSlug: realmSlug,
           region: region.toUpperCase(),
+          realmPriority: rPrio,
+          isMega: isMega,
           class: className,
           spec: specName,
           specId: specId,
@@ -169,6 +165,17 @@ async function scanRaiderIoPages(registry, options = {}) {
         updatedPlayersCount++;
         const existing = registry.players[playerKey];
         existing.lastSeenAt = Date.now();
+        existing.realmPriority = existing.realmPriority || rPrio;
+        existing.isMega = existing.realmPriority === 1;
+
+        // Maintenance detection: Check if player pushed higher score or key
+        const scoreChanged = overallScore > (existing.rioScore || 0);
+        const keyChanged = highestKey > (existing.highestKey || 0);
+        if (scoreChanged || keyChanged) {
+          existing.needsReenrichment = true;
+          existing.lastScoreGain = Math.round((overallScore - (existing.rioScore || 0)) * 10) / 10;
+        }
+
         existing.rioScore = overallScore;
         if (highestKey > (existing.highestKey || 0)) {
           existing.highestKey = highestKey;
