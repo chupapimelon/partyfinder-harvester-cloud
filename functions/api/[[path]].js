@@ -80,7 +80,6 @@ export async function onRequest(context) {
       }
     });
 
-    const body = await res.arrayBuffer();
     const headers = new Headers(res.headers);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
@@ -90,7 +89,7 @@ export async function onRequest(context) {
       headers.set('Cache-Control', 'public, max-age=60');
     }
 
-    return new Response(body, {
+    return new Response(res.body, {
       status: res.status,
       statusText: res.statusText,
       headers: headers

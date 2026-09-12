@@ -519,7 +519,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let currentPage = 1;
-  const itemsPerPage = 25;
+  const itemsPerPage = 50;
 
   // === Hourly Auto-Deploy to Cloudflare CDN (Option A) ===
   let lastAutoDeployTime = Date.now();
@@ -557,75 +557,155 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Scraped Player Database (Populated dynamically from Hybrid Engine)
   // --------------------------------------------------------------------------
   let playerDatabase = [];
+  let metaTotalPlayers = 0;
+  let metaTotalPages = 0;
+  let isDatabaseLoading = false;
+  const loadedPagesSet = new Set();
+  const searchIndexCache = new Map();
+  let searchDebounceTimer = null;
 
-  async function loadHarvestPlayers() {
+  function normalizePlayerRecord(p, reg) {
+    const role = p.role || (p.spec === 'Blood' || p.spec === 'Protection' || p.spec === 'Guardian' || p.spec === 'Brewmaster' || p.spec === 'Vengeance' ? 'Tank' : (p.spec === 'Restoration' || p.spec === 'Holy' || p.spec === 'Mistweaver' || p.spec === 'Preservation' || p.spec === 'Discipline' ? 'Healer' : 'DPS'));
+    const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
+    const wcl = p.wcl || {};
+    const median = p.wclMedian ?? wcl.medianParse ?? p.medianParse ?? p.median ?? p.wclScore ?? 0;
+    const isUnlogged = p.unlogged !== undefined ? p.unlogged : (wcl.unlogged !== undefined ? !!wcl.unlogged : false);
+    return {
+      name: p.name,
+      realm: p.realm,
+      realmSlug: p.realmSlug || cleanRealmSlug(p.realm),
+      region: (p.region || reg || currentActiveRegion || 'US').toUpperCase(),
+      class: p.class,
+      spec: p.spec,
+      role: role,
+      rioScore: p.rioScore || 0,
+      median: Number(median) || 0,
+      metric: metric,
+      dungeons: p.dungeons || 8,
+      runs: p.runsCount || p.runs || p.totalKills || 1,
+      enriched: !!p.enriched,
+      unlogged: isUnlogged,
+      lastSync: p.lastEnrichedAt ? new Date(p.lastEnrichedAt).toLocaleTimeString() : (p.lastWclCheck ? new Date(p.lastWclCheck).toLocaleTimeString() : (p.enriched ? 'Enriched' : 'Discovered'))
+    };
+  }
+
+  async function loadHarvestPlayers(force = false) {
+    if (isDatabaseLoading && !force) return;
+    isDatabaseLoading = true;
     try {
       const reg = (currentActiveRegion || 'US').toLowerCase();
-      let res;
+
+      // Show immediate responsive loading indicator if table is currently empty
+      if (dbTableBody && playerDatabase.length === 0) {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database from CDN...</td></tr>`;
+      }
+
       if (IS_CLOUD) {
+        // 1. Fetch lightweight meta.json (< 1 KB, ~20ms)
         try {
-          res = await fetch('/data/rio_players_us.json');
+          let metaRes = await fetch(`/api/${reg}/meta.json`).catch(() => null);
+          if (!metaRes || !metaRes.ok) {
+            metaRes = await fetch(`${R2_BASE}/api/${reg}/meta.json`).catch(() => null);
+          }
+          if (metaRes && metaRes.ok) {
+            const meta = await metaRes.json();
+            if (meta.totalPlayers) {
+              metaTotalPlayers = Number(meta.totalPlayers);
+              metaTotalPages = Number(meta.totalPages) || Math.ceil(metaTotalPlayers / itemsPerPage);
+              latestHarvestStatus = latestHarvestStatus || {};
+              latestHarvestStatus.totalPlayers = metaTotalPlayers;
+              latestHarvestStatus.totalTrackedPlayers = metaTotalPlayers;
+              if (dbTotalCountBadge) {
+                dbTotalCountBadge.textContent = `${metaTotalPlayers.toLocaleString()} Players Recorded`;
+              }
+            }
+          }
         } catch (e) {}
-        if (!res || !res.ok) {
-          try {
-            res = await fetch(`${R2_BASE}/data/rio_players_us.json`);
-          } catch (e) {}
-        }
-      }
-      if (!res || !res.ok) {
+
+        // 2. Fetch Page 1 immediately (12 KB, ~30ms)
+        let res = null;
         try {
-          res = await fetch(`/api/harvest/players?region=${reg}&limit=100000`);
+          res = await fetch(`/api/${reg}/page_0001.json`).catch(() => null);
+          if (!res || !res.ok) {
+            res = await fetch(`/api/harvest/players?region=${reg}&page=1`).catch(() => null);
+          }
+          if (!res || !res.ok) {
+            res = await fetch(`${R2_BASE}/api/${reg}/page_0001.json`).catch(() => null);
+          }
         } catch (e) {}
-      }
-      if (res && res.ok) {
-        const data = await res.json();
-        let rawPlayers = [];
-        if (Array.isArray(data.players)) {
-          rawPlayers = data.players;
-        } else if (data.players && typeof data.players === 'object') {
-          rawPlayers = Object.values(data.players);
+
+        if (res && res.ok) {
+          const data = await res.json();
+          const rawList = Array.isArray(data.players) ? data.players : (Array.isArray(data) ? data : []);
+          if (rawList.length > 0) {
+            playerDatabase = rawList.map(p => normalizePlayerRecord(p, reg));
+            loadedPagesSet.add(1);
+            renderDatabaseTable();
+            updateTelemetryHUD();
+            if (rawRealmsData) renderAnalyticsGrid(rawRealmsData);
+          }
         }
 
-        if (Array.isArray(rawPlayers) && rawPlayers.length > 0) {
-          // Sort by highest Raider.IO score first
-          rawPlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+        // 3. Background prefetch: Load top active pages (pages 2 to 20 = top 1,000 pushers) without blocking UI
+        loadBackgroundCloudPages(reg).catch(() => {});
 
-          playerDatabase = rawPlayers.map(p => {
-            const role = p.role || (p.spec === 'Blood' || p.spec === 'Protection' || p.spec === 'Guardian' || p.spec === 'Brewmaster' || p.spec === 'Vengeance' ? 'Tank' : (p.spec === 'Restoration' || p.spec === 'Holy' || p.spec === 'Mistweaver' || p.spec === 'Preservation' || p.spec === 'Discipline' ? 'Healer' : 'DPS'));
-            const metric = role === 'Tank' ? 'Speed' : (role === 'Healer' ? 'HPS' : 'DPS');
-            const wcl = p.wcl || {};
-            const median = p.wclMedian || wcl.medianParse || p.medianParse || p.wclScore || 0;
-            const isUnlogged = p.unlogged !== undefined ? p.unlogged : !!wcl.unlogged;
-            return {
-              name: p.name,
-              realm: p.realm,
-              realmSlug: p.realmSlug || p.realm.toLowerCase().replace(/['\s]/g, ''),
-              region: (p.region || currentActiveRegion || 'US').toUpperCase(),
-              class: p.class,
-              spec: p.spec,
-              role: role,
-              rioScore: p.rioScore || 0,
-              median: median,
-              metric: metric,
-              dungeons: p.dungeons || 8,
-              runs: p.runsCount || p.runs || 1,
-              enriched: !!p.enriched,
-              unlogged: isUnlogged,
-              lastSync: p.lastEnrichedAt ? new Date(p.lastEnrichedAt).toLocaleTimeString() : (p.lastWclCheck ? new Date(p.lastWclCheck).toLocaleTimeString() : 'Discovered')
-            };
-          });
-
-          renderDatabaseTable();
-          updateTelemetryHUD();
-
-          if (rawRealmsData) {
-            renderAnalyticsGrid(rawRealmsData);
+      } else {
+        // Local mode: query local node server
+        let res = await fetch(`/api/harvest/players?region=${reg}&limit=100000`).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          let rawList = Array.isArray(data.players) ? data.players : (Array.isArray(data) ? data : (data.players ? Object.values(data.players) : []));
+          if (Array.isArray(rawList) && rawList.length > 0) {
+            rawList.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+            playerDatabase = rawList.map(p => normalizePlayerRecord(p, reg));
+            renderDatabaseTable();
+            updateTelemetryHUD();
+            if (rawRealmsData) renderAnalyticsGrid(rawRealmsData);
           }
         }
       }
     } catch (err) {
       console.warn('[Hybrid Engine] Error fetching players:', err);
+    } finally {
+      isDatabaseLoading = false;
     }
+  }
+
+  async function loadBackgroundCloudPages(reg) {
+    const targetPages = [];
+    for (let i = 2; i <= 20; i++) {
+      if (!loadedPagesSet.has(i)) targetPages.push(i);
+    }
+    if (targetPages.length === 0) return;
+
+    for (let i = 0; i < targetPages.length; i += 4) {
+      const batch = targetPages.slice(i, i + 4);
+      await Promise.all(batch.map(async (pageNum) => {
+        const pStr = String(pageNum).padStart(4, '0');
+        try {
+          let pRes = await fetch(`/api/${reg}/page_${pStr}.json`).catch(() => null);
+          if (!pRes || !pRes.ok) {
+            pRes = await fetch(`${R2_BASE}/api/${reg}/page_${pStr}.json`).catch(() => null);
+          }
+          if (pRes && pRes.ok) {
+            const pData = await pRes.json();
+            if (Array.isArray(pData.players)) {
+              loadedPagesSet.add(pageNum);
+              const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
+              const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
+              for (const np of newPlayers) {
+                const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
+                if (!existingKeys.has(k)) {
+                  existingKeys.add(k);
+                  playerDatabase.push(np);
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }));
+    }
+    renderDatabaseTable();
   }
 
   // --------------------------------------------------------------------------
@@ -948,11 +1028,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
           }
 
-          // Reload player database if new players were discovered
+          // Update total tracked count without triggering heavy network re-fetches
           const currentTotalTracked = Number(data.totalTrackedPlayers || data.totalPlayers || 0);
           if (currentTotalTracked > 0 && currentTotalTracked !== lastLoadedPlayersTotal) {
             lastLoadedPlayersTotal = currentTotalTracked;
-            loadHarvestPlayers().catch(() => {});
+            metaTotalPlayers = Math.max(metaTotalPlayers, currentTotalTracked);
+            if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${currentTotalTracked.toLocaleString()} Players Recorded`;
           }
         }
       }
@@ -972,6 +1053,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       btn.classList.add('active');
       const pane = document.getElementById(targetId);
       if (pane) pane.classList.add('active');
+      if (targetId === 'tab-database') {
+        if (playerDatabase.length === 0) {
+          loadHarvestPlayers().catch(() => {});
+        } else {
+          renderDatabaseTable();
+        }
+      }
       if (targetId === 'tab-analytics' && rawRealmsData) {
         renderAnalyticsGrid(rawRealmsData);
         refreshLiveRioCensus().catch(() => {});
@@ -1848,17 +1936,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --------------------------------------------------------------------------
   // 4. Database Tab Filtering & Table Rendering
   // --------------------------------------------------------------------------
-  [dbSearchInput, dbRealmFilter, dbTierFilter, dbRoleFilter, dbClassFilter, dbParseFilter, dbStatusFilter].forEach((input) => {
+  [dbRealmFilter, dbTierFilter, dbRoleFilter, dbClassFilter, dbParseFilter, dbStatusFilter].forEach((input) => {
     if (!input) return;
-    input.addEventListener('input', () => {
-      currentPage = 1;
-      renderDatabaseTable();
-    });
     input.addEventListener('change', () => {
       currentPage = 1;
       renderDatabaseTable();
     });
   });
+
+  if (dbSearchInput) {
+    dbSearchInput.addEventListener('input', () => {
+      handleSearchInput();
+    });
+  }
+
+  async function handleSearchInput() {
+    currentPage = 1;
+    const searchVal = dbSearchInput.value.trim().toLowerCase();
+    renderDatabaseTable();
+
+    if (IS_CLOUD && searchVal.length >= 1) {
+      const firstChar = searchVal[0];
+      const bucket = /[a-z]/.test(firstChar) ? firstChar : 'misc';
+
+      if (!searchIndexCache.has(bucket)) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(async () => {
+          try {
+            const reg = (currentActiveRegion || 'US').toLowerCase();
+            let sRes = await fetch(`/api/${reg}/search_${bucket}.json`).catch(() => null);
+            if (!sRes || !sRes.ok) {
+              sRes = await fetch(`${R2_BASE}/api/${reg}/search_${bucket}.json`).catch(() => null);
+            }
+            if (sRes && sRes.ok) {
+              const sData = await sRes.json();
+              if (Array.isArray(sData.players)) {
+                searchIndexCache.set(bucket, true);
+                const sPlayers = sData.players.map(p => normalizePlayerRecord(p, reg));
+                const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
+                for (const sp of sPlayers) {
+                  const k = `${sp.name.toLowerCase()}#${sp.realm.toLowerCase()}`;
+                  if (!existingKeys.has(k)) {
+                    existingKeys.add(k);
+                    playerDatabase.push(sp);
+                  }
+                }
+                renderDatabaseTable();
+              }
+            }
+          } catch (e) {}
+        }, 120);
+      }
+    }
+  }
 
   btnDbPrevPage.addEventListener('click', () => {
     if (currentPage > 1) {
@@ -1867,19 +1997,59 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  btnDbNextPage.addEventListener('click', () => {
+  btnDbNextPage.addEventListener('click', async () => {
+    const searchVal = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
+    const hasFilter = (dbRealmFilter && dbRealmFilter.value !== 'all') ||
+                      (dbTierFilter && dbTierFilter.value !== 'all') ||
+                      (dbRoleFilter && dbRoleFilter.value !== 'all') ||
+                      (dbClassFilter && dbClassFilter.value !== 'all') ||
+                      (dbParseFilter && parseFloat(dbParseFilter.value) > 0) ||
+                      (dbStatusFilter && dbStatusFilter.value !== 'all');
+
+    if (IS_CLOUD && !searchVal && !hasFilter) {
+      const neededCount = (currentPage + 1) * itemsPerPage;
+      if (playerDatabase.length < neededCount && metaTotalPages > 0 && currentPage < metaTotalPages) {
+        const pageNum = currentPage + 1;
+        if (!loadedPagesSet.has(pageNum)) {
+          const reg = (currentActiveRegion || 'US').toLowerCase();
+          const pStr = String(pageNum).padStart(4, '0');
+          try {
+            let pRes = await fetch(`/api/${reg}/page_${pStr}.json`).catch(() => null);
+            if (!pRes || !pRes.ok) pRes = await fetch(`${R2_BASE}/api/${reg}/page_${pStr}.json`).catch(() => null);
+            if (pRes && pRes.ok) {
+              const pData = await pRes.json();
+              if (Array.isArray(pData.players)) {
+                loadedPagesSet.add(pageNum);
+                const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
+                const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
+                for (const np of newPlayers) {
+                  const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
+                  if (!existingKeys.has(k)) {
+                    existingKeys.add(k);
+                    playerDatabase.push(np);
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
     currentPage++;
     renderDatabaseTable();
   });
 
   function renderDatabaseTable() {
-    const searchVal = dbSearchInput.value.trim().toLowerCase();
-    const realmVal = dbRealmFilter.value;
+    const searchVal = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
+    const realmVal = dbRealmFilter ? dbRealmFilter.value : 'all';
     const tierVal = dbTierFilter ? dbTierFilter.value : 'all';
-    const roleVal = dbRoleFilter.value;
-    const classVal = dbClassFilter.value;
-    const minParseVal = parseFloat(dbParseFilter.value) || 0;
+    const roleVal = dbRoleFilter ? dbRoleFilter.value : 'all';
+    const classVal = dbClassFilter ? dbClassFilter.value : 'all';
+    const minParseVal = dbParseFilter ? (parseFloat(dbParseFilter.value) || 0) : 0;
     const statusVal = dbStatusFilter ? dbStatusFilter.value : 'all';
+
+    const hasFilter = searchVal || realmVal !== 'all' || tierVal !== 'all' || roleVal !== 'all' || classVal !== 'all' || minParseVal > 0 || statusVal !== 'all';
 
     const filtered = playerDatabase.filter((p) => {
       if (searchVal && !p.name.toLowerCase().includes(searchVal)) return false;
@@ -1897,7 +2067,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return true;
     });
 
-    const total = filtered.length;
+    const total = hasFilter ? filtered.length : (metaTotalPlayers || filtered.length);
     const totalPages = Math.ceil(total / itemsPerPage) || 1;
     if (currentPage > totalPages) currentPage = totalPages;
 
@@ -1907,7 +2077,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     dbTableBody.innerHTML = '';
 
     if (pageItems.length === 0) {
-      dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">No players matching filter criteria.</td></tr>`;
+      if (isDatabaseLoading) {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database...</td></tr>`;
+      } else {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">No players matching filter criteria.</td></tr>`;
+      }
     } else {
       pageItems.forEach((p) => {
         const tr = document.createElement('tr');
@@ -1975,8 +2149,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
 
-    dbPageInfo.textContent = `Showing ${total === 0 ? 0 : start + 1} to ${Math.min(start + itemsPerPage, total)} of ${total} entries`;
-    dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages}`;
+    dbPageInfo.textContent = `Showing ${total === 0 ? 0 : start + 1} to ${Math.min(start + itemsPerPage, total)} of ${total.toLocaleString()} entries`;
+    dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages.toLocaleString()}`;
     btnDbPrevPage.disabled = currentPage <= 1;
     btnDbNextPage.disabled = currentPage >= totalPages;
 

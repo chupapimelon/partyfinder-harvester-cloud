@@ -22,14 +22,13 @@ export async function onRequest(context) {
       }
     });
 
-    const body = await res.arrayBuffer();
     const headers = new Headers(res.headers);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     headers.set('Access-Control-Allow-Headers', '*');
     headers.set('Cache-Control', 'public, max-age=300');
 
-    return new Response(body, {
+    return new Response(res.body, {
       status: res.status,
       statusText: res.statusText,
       headers: headers

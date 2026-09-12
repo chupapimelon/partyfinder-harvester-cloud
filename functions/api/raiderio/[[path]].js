@@ -31,7 +31,6 @@ export async function onRequest(context) {
       if (attempt < 2) await new Promise(r => setTimeout(r, 800));
     }
 
-    const body = await res.arrayBuffer();
     const headers = new Headers();
     headers.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
     headers.set('Access-Control-Allow-Origin', '*');
@@ -39,7 +38,7 @@ export async function onRequest(context) {
     headers.set('Access-Control-Allow-Headers', '*');
     headers.set('Cache-Control', 'public, max-age=60');
 
-    return new Response(body, {
+    return new Response(res.body, {
       status: res.status,
       headers
     });
