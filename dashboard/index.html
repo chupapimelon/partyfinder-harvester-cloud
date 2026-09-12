@@ -95,7 +95,7 @@
               <div class="priority-tier-pills" id="autoPilotTierPills">
                 <span class="tier-pill pill-p1" id="pillP1Count"><img src="assets/raiderio_logo.png" class="tier-brand-img" alt="Raider.IO"> Raider.IO Ready</span>
                 <span class="tier-pill pill-p2" id="pillP2Count"><img src="assets/warcraftlogs_logo.png" class="tier-brand-img" alt="WCL"> WCL Parser Ready</span>
-                <span class="tier-pill pill-p3" id="pillP3Count">🚀 Cloudflare CDN Ready</span>
+                <span class="tier-pill pill-p3" id="pillP3Count">🚀 CDN Auto-Push: Hourly @ :17</span>
               </div>
             </div>
           </div>
@@ -108,6 +108,11 @@
             <div class="cycle-counter timer-counter" id="autoPilotTimerBox">
               <span class="cycle-label" id="autoPilotTimerLabel">AUTO-PILOT STATUS</span>
               <span class="cycle-num timer-num" id="autoPilotTimerCount" style="color: #94a3b8;">PAUSED</span>
+            </div>
+            <div class="cycle-counter cdn-push-counter" id="autoPushPaceBox" title="Hourly Git commit & Cloudflare Pages CDN push at minute :17">
+              <span class="cycle-label">CDN AUTO-PUSH</span>
+              <span class="cycle-num" id="autoPushScheduleDisplay" style="color: #38bdf8; font-size: 13px; font-weight: 700;">HOURLY @ :17</span>
+              <span class="cycle-sub" id="autoPushCountdownDisplay" style="font-size: 10px; color: #94a3b8; font-family: var(--font-mono);">Next: calculating...</span>
             </div>
             <div class="cycle-counter">
               <span class="cycle-label">ACTIVE ENGINE</span>
@@ -344,6 +349,16 @@
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke-width="2"/></svg>
               DEPLOY CDN
             </button>
+            <div class="cdn-schedule-info" id="cdnScheduleInfo" title="GitHub Actions compiles Lua & pushes to Cloudflare Pages hourly at :17">
+              <span style="color: #38bdf8; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Auto-Push: Hourly @ :17
+              </span>
+              <span style="color: #64748b;">•</span>
+              <span id="deckNextPushCountdown" style="color: #e2e8f0; font-family: var(--font-mono); font-weight: 600;">Next: --</span>
+              <span style="color: #64748b;">•</span>
+              <span id="deckLastPushTime" style="color: #94a3b8;">Last: --</span>
+            </div>
           </div>
         </div>
 
@@ -822,6 +837,37 @@
                 </label>
               </div>
             </div>
+
+            <!-- Cloud Automation Schedule Overview -->
+            <div class="setting-group full-width" style="margin-top: 10px; background: rgba(56, 189, 248, 0.04); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 14px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                <div style="font-size: 13px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px;">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Autonomous Cloud Schedule &amp; Data Pipeline
+                </div>
+                <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">24/7 Active</span>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12px;">
+                <div style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.06);">
+                  <div style="font-weight: 700; color: #f59e0b; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                    <span>⚡ Harvester Crawl &amp; Enrich</span>
+                    <span style="font-size: 10px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; padding: 1px 6px; border-radius: 4px;">Every 5 min</span>
+                  </div>
+                  <div style="color: var(--text-muted); line-height: 1.4;">
+                    Scrapes authentic Raider.IO leaderboards and enriches player parses via Warcraft Logs API. Intermediate registries and static JSON pages are continuously synced to <strong>Cloudflare R2</strong>.
+                  </div>
+                </div>
+                <div style="background: rgba(0, 0, 0, 0.3); padding: 12px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.06);">
+                  <div style="font-weight: 700; color: #38bdf8; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                    <span>🚀 CDN Compile &amp; Git Push</span>
+                    <span style="font-size: 10px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 1px 6px; border-radius: 4px;">Hourly @ :17</span>
+                  </div>
+                  <div style="color: var(--text-muted); line-height: 1.4;">
+                    Compiles unified player database into compact Lua and metadata. Creates a Git commit and pushes to <code>chupapimelon/imong-mama-ui</code>, triggering Cloudflare Pages CDN (<code>imongmama.online</code>) live updates in ~60-90s.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -837,10 +883,10 @@
         <span class="footer-sub" id="footerSubText">Deep Realm Scraper active. Role Metrics: Tank=Speed, DPS=Damage, Healer=HPS.</span>
       </div>
       <div class="footer-right">
-        <div class="status-pill status-cdn" title="Cloudflare Pages Production Endpoint">
+        <div class="status-pill status-cdn" id="footerCdnPill" title="Cloudflare Pages Production Endpoint • Hourly Commit & Push at :17 past each hour">
           <span class="pulse-dot"></span>
           <span class="pill-label">CDN:</span>
-          <span class="pill-val">imongmama.online</span>
+          <span class="pill-val" id="footerCdnVal">imongmama.online • Push @ :17</span>
         </div>
         <div class="status-pill status-rate" id="wclRatePill" title="Hourly Warcraft Logs API Budget (3,600 pts/hr)">
           <svg class="pill-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>

@@ -628,12 +628,104 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // --------------------------------------------------------------------------
+  // Hourly CDN Commit & Push Schedule Tracker (:17 past every hour)
+  // --------------------------------------------------------------------------
+  let lastDeployState = null;
+  let lastDeployFetchTime = 0;
+
+  async function fetchLastDeployState() {
+    if (Date.now() - lastDeployFetchTime < 30000) return;
+    lastDeployFetchTime = Date.now();
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/harvester_state?key=eq.last_deploy&select=value`, {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows && rows[0]?.value) {
+          lastDeployState = rows[0].value;
+          if (latestHarvestStatus) {
+            latestHarvestStatus.lastDeploy = lastDeployState;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  function updateCdnPushScheduleUI() {
+    const now = new Date();
+    const nextPush = new Date(now);
+    if (now.getMinutes() < 17) {
+      nextPush.setMinutes(17, 0, 0);
+    } else {
+      nextPush.setHours(nextPush.getHours() + 1);
+      nextPush.setMinutes(17, 0, 0);
+    }
+
+    const diffMs = Math.max(0, nextPush.getTime() - now.getTime());
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffSec = Math.floor((diffMs % 60000) / 1000);
+    const secPad = diffSec < 10 ? `0${diffSec}` : diffSec;
+    const nextTimeStr = nextPush.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const autoPushSub = document.getElementById('autoPushCountdownDisplay');
+    if (autoPushSub) {
+      autoPushSub.textContent = `Next: in ${diffMin}m ${secPad}s (${nextTimeStr})`;
+    }
+
+    const deckNextCountdown = document.getElementById('deckNextPushCountdown');
+    if (deckNextCountdown) {
+      deckNextCountdown.textContent = `Next: in ${diffMin}m ${secPad}s (${nextTimeStr})`;
+    }
+
+    // Determine last deploy timestamp
+    let lastPushIso = null;
+    let lastPushPlayers = null;
+    let lastPushSha = null;
+
+    if (lastDeployState?.at) {
+      lastPushIso = lastDeployState.at;
+      lastPushPlayers = lastDeployState.stats?.totalPlayers;
+      lastPushSha = lastDeployState.commitSha;
+    } else if (latestHarvestStatus?.lastDeploy?.at) {
+      lastPushIso = latestHarvestStatus.lastDeploy.at;
+      lastPushPlayers = latestHarvestStatus.lastDeploy.stats?.totalPlayers;
+      lastPushSha = latestHarvestStatus.lastDeploy.commitSha;
+    }
+
+    const deckLastPush = document.getElementById('deckLastPushTime');
+    if (deckLastPush) {
+      if (lastPushIso) {
+        const lastDate = new Date(lastPushIso);
+        const agoMs = Math.max(0, now.getTime() - lastDate.getTime());
+        const agoMin = Math.floor(agoMs / 60000);
+        let agoStr = '';
+        if (agoMin < 1) agoStr = 'just now';
+        else if (agoMin < 60) agoStr = `${agoMin}m ago`;
+        else agoStr = `${Math.floor(agoMin / 60)}h ${agoMin % 60}m ago`;
+
+        const plyrStr = lastPushPlayers ? ` (${Number(lastPushPlayers).toLocaleString()} players)` : '';
+        deckLastPush.textContent = `Last: ${agoStr}${plyrStr}`;
+        deckLastPush.title = `Last deployed: ${lastDate.toLocaleString()}${lastPushSha ? ` • Commit: ${lastPushSha}` : ''}`;
+      } else {
+        deckLastPush.textContent = `Last: Hourly @ :17`;
+      }
+    }
+
+    const footerCdnVal = document.getElementById('footerCdnVal');
+    if (footerCdnVal) {
+      footerCdnVal.textContent = `imongmama.online • Push @ :17 (Next: ${nextTimeStr})`;
+    }
+  }
+
   const seenLogIds = new Set();
   const seenDiscoveredKeys = new Set();
   let lastLoadedPlayersTotal = 0;
 
   async function fetchHarvestStatus() {
     try {
+      await fetchLastDeployState().catch(() => {});
       let res;
       let isR2Fallback = false;
       try {
@@ -3068,8 +3160,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await fetchHarvestStatus();
   });
 
-  // Recurring 1s Poller to keep Telemetry HUD, Logs, and Cards synchronized across browser refreshes
-  setInterval(fetchHarvestStatus, 1000);
+  // Recurring 1s Poller to keep Telemetry HUD, Logs, Cards, and CDN Auto-Push live countdown synchronized
+  setInterval(() => {
+    fetchHarvestStatus();
+    updateCdnPushScheduleUI();
+  }, 1000);
+  updateCdnPushScheduleUI();
 
   // Deploy button
   btnSyncCloud.addEventListener('click', async () => {
