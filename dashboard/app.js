@@ -669,16 +669,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const secPad = diffSec < 10 ? `0${diffSec}` : diffSec;
     const nextTimeStr = nextPush.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const autoPushSub = document.getElementById('autoPushCountdownDisplay');
-    if (autoPushSub) {
-      autoPushSub.textContent = `Next: in ${diffMin}m ${secPad}s (${nextTimeStr})`;
-    }
-
-    const deckNextCountdown = document.getElementById('deckNextPushCountdown');
-    if (deckNextCountdown) {
-      deckNextCountdown.textContent = `Next: in ${diffMin}m ${secPad}s (${nextTimeStr})`;
-    }
-
     // Determine last deploy timestamp
     let lastPushIso = null;
     let lastPushPlayers = null;
@@ -694,28 +684,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       lastPushSha = latestHarvestStatus.lastDeploy.commitSha;
     }
 
-    const deckLastPush = document.getElementById('deckLastPushTime');
-    if (deckLastPush) {
-      if (lastPushIso) {
-        const lastDate = new Date(lastPushIso);
-        const agoMs = Math.max(0, now.getTime() - lastDate.getTime());
-        const agoMin = Math.floor(agoMs / 60000);
-        let agoStr = '';
-        if (agoMin < 1) agoStr = 'just now';
-        else if (agoMin < 60) agoStr = `${agoMin}m ago`;
-        else agoStr = `${Math.floor(agoMin / 60)}h ${agoMin % 60}m ago`;
-
-        const plyrStr = lastPushPlayers ? ` (${Number(lastPushPlayers).toLocaleString()} players)` : '';
-        deckLastPush.textContent = `Last: ${agoStr}${plyrStr}`;
-        deckLastPush.title = `Last deployed: ${lastDate.toLocaleString()}${lastPushSha ? ` • Commit: ${lastPushSha}` : ''}`;
-      } else {
-        deckLastPush.textContent = `Last: Hourly @ :17`;
-      }
+    let agoStr = '';
+    if (lastPushIso) {
+      const lastDate = new Date(lastPushIso);
+      const agoMs = Math.max(0, now.getTime() - lastDate.getTime());
+      const agoMin = Math.floor(agoMs / 60000);
+      agoStr = agoMin < 1 ? 'just now' : (agoMin < 60 ? `${agoMin}m ago` : `${Math.floor(agoMin / 60)}h ${agoMin % 60}m ago`);
     }
 
-    const footerCdnVal = document.getElementById('footerCdnVal');
-    if (footerCdnVal) {
-      footerCdnVal.textContent = `imongmama.online • Push @ :17 (Next: ${nextTimeStr})`;
+    // Sleek micro-status under DEPLOY CDN button
+    const deckCountdown = document.getElementById('deckNextPushCountdown');
+    if (deckCountdown) {
+      deckCountdown.textContent = `Auto: Hourly @ :17 (in ${diffMin}m ${secPad}s)`;
+      let tooltip = `Automated GitHub Actions push runs hourly at :17 past.\nNext push: ${nextTimeStr} (in ${diffMin}m ${secPad}s)`;
+      if (agoStr) {
+        const plyrStr = lastPushPlayers ? ` • ${Number(lastPushPlayers).toLocaleString()} players` : '';
+        const shaStr = lastPushSha ? ` • Commit ${lastPushSha.slice(0, 8)}` : '';
+        tooltip += `\nLast push: ${agoStr}${plyrStr}${shaStr}`;
+      }
+      deckCountdown.title = tooltip;
+    }
+
+    // Footer tooltip update
+    const footerPill = document.getElementById('footerCdnPill');
+    if (footerPill) {
+      footerPill.title = `Cloudflare Pages Live CDN\nSchedule: Hourly at :17 past\nNext auto-push: ${nextTimeStr} (in ${diffMin}m ${secPad}s)${agoStr ? `\nLast push: ${agoStr}` : ''}`;
     }
   }
 
