@@ -17,54 +17,123 @@ function getClient() {
   return _client;
 }
 
-/**
- * Read a harvester state value by key
- * @param {string} key — e.g., 'progress', 'config', 'recent_logs'
- * @returns {object|null} The JSONB value
- */
-async function getState(key) {
-  const sb = getClient();
-  const { data, error } = await sb
-    .from('harvester_state')
-    .select('value')
-    .eq('key', key)
-    .single();
-  if (error) {
-    if (error.code === 'PGRST116') return null; // Not found
-    console.warn(`[Supabase] getState("${key}") error:`, error.message);
-    return null;
-  }
-  return data?.value ?? null;
+const RETRYABLE_PATTERNS = [
+  'gateway timeout',
+  '504',
+  '502',
+  '503',
+  'etimedout',
+  'econnreset',
+  'fetch failed',
+  'network timeout',
+  'request timed out',
+];
+
+function isTransientError(err) {
+  if (!err) return false;
+  const msg = (err.message || String(err)).toLowerCase();
+  return RETRYABLE_PATTERNS.some(p => msg.includes(p));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * Write a harvester state value (upsert)
+ * Read a harvester state value by key with automatic retry on transient gateway/network errors
+ * @param {string} key — e.g., 'progress', 'config', 'recent_logs'
+ * @param {number} [maxRetries=3]
+ * @returns {object|null} The JSONB value
+ */
+async function getState(key, maxRetries = 3) {
+  let delayMs = 1500;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const sb = getClient();
+      const { data, error } = await sb
+        .from('harvester_state')
+        .select('value')
+        .eq('key', key)
+        .single();
+      if (error) {
+        if (error.code === 'PGRST116') return null; // Not found
+        if (attempt < maxRetries && isTransientError(error)) {
+          console.warn(`[Supabase] getState("${key}") transient error (${error.message}). Retrying ${attempt}/${maxRetries} in ${delayMs}ms...`);
+          await sleep(delayMs);
+          delayMs *= 2;
+          continue;
+        }
+        console.warn(`[Supabase] getState("${key}") error:`, error.message);
+        return null;
+      }
+      return data?.value ?? null;
+    } catch (err) {
+      if (attempt < maxRetries && isTransientError(err)) {
+        console.warn(`[Supabase] getState("${key}") network error (${err.message}). Retrying ${attempt}/${maxRetries} in ${delayMs}ms...`);
+        await sleep(delayMs);
+        delayMs *= 2;
+        continue;
+      }
+      console.warn(`[Supabase] getState("${key}") network exception:`, err.message);
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Write a harvester state value (upsert) with automatic retry on transient gateway/network errors
  * @param {string} key
  * @param {object} value — JSONB value
+ * @param {number} [maxRetries=3]
  */
-async function setState(key, value) {
-  const sb = getClient();
-  const { error } = await sb
-    .from('harvester_state')
-    .upsert(
-      { key, value, updated_at: new Date().toISOString() },
-      { onConflict: 'key' }
-    );
-  if (error) {
-    console.error(`[Supabase] setState("${key}") error:`, error.message);
-    throw error;
+async function setState(key, value, maxRetries = 3) {
+  let delayMs = 1500;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const sb = getClient();
+      const { error } = await sb
+        .from('harvester_state')
+        .upsert(
+          { key, value, updated_at: new Date().toISOString() },
+          { onConflict: 'key' }
+        );
+      if (error) {
+        if (attempt < maxRetries && isTransientError(error)) {
+          console.warn(`[Supabase] setState("${key}") transient error (${error.message}). Retrying ${attempt}/${maxRetries} in ${delayMs}ms...`);
+          await sleep(delayMs);
+          delayMs *= 2;
+          continue;
+        }
+        console.error(`[Supabase] setState("${key}") error:`, error.message);
+        throw error;
+      }
+      return;
+    } catch (err) {
+      if (attempt < maxRetries && isTransientError(err)) {
+        console.warn(`[Supabase] setState("${key}") network exception (${err.message}). Retrying ${attempt}/${maxRetries} in ${delayMs}ms...`);
+        await sleep(delayMs);
+        delayMs *= 2;
+        continue;
+      }
+      throw err;
+    }
   }
 }
 
 /**
  * Append log entries to the recent_logs state
- * Keeps only the last 50 log entries
+ * Keeps only the last 50 log entries. Safe against transient failure.
  * @param {Array<{type: string, message: string, time: string}>} newLogs
  */
 async function appendLogs(newLogs) {
-  const existing = (await getState('recent_logs')) || [];
-  const combined = [...existing, ...newLogs].slice(-50);
-  await setState('recent_logs', combined);
+  try {
+    const existing = (await getState('recent_logs')) || [];
+    const combined = [...existing, ...newLogs].slice(-50);
+    await setState('recent_logs', combined);
+  } catch (err) {
+    console.warn('[Supabase] appendLogs non-fatal warning:', err.message || err);
+  }
 }
 
 /**

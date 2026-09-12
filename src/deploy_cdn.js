@@ -245,21 +245,29 @@ async function main() {
     console.log('[GitHub] ✅ Deploy complete! Cloudflare Pages build triggered.');
     console.log(`[CDN] https://imongmama.online will update in ~60-90s`);
 
-    // 3. Update Supabase deploy state
-    await sb.setState('last_deploy', {
-      at: new Date().toISOString(),
-      stats: compiled.stats,
-      commitSha: luaSha.slice(0, 8),
-    });
-    await sb.appendLogs([
-      { type: 'success', message: `[CDN Deploy] ${compiled.stats.totalPlayers} players pushed to Cloudflare Pages.`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
-    ]);
+    // 3. Update Supabase deploy state (non-fatal telemetry)
+    try {
+      console.log('[Supabase] Updating last_deploy state...');
+      await sb.setState('last_deploy', {
+        at: new Date().toISOString(),
+        stats: compiled.stats,
+        commitSha: luaSha.slice(0, 8),
+      });
+      await sb.appendLogs([
+        { type: 'success', message: `[CDN Deploy] ${compiled.stats.totalPlayers} players pushed to Cloudflare Pages.`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
+      ]);
+      console.log('[Supabase] ✅ State and logs updated.');
+    } catch (sbErr) {
+      console.warn(`[Supabase] ⚠️ Telemetry update failed: ${sbErr.message || sbErr}. (CDN deployment was already completed successfully)`);
+    }
 
   } catch (err) {
     console.error('[FATAL] CDN deploy failed:', err);
-    await sb.appendLogs([
-      { type: 'error', message: `[CDN Deploy FAILED] ${err.message}`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
-    ]);
+    try {
+      await sb.appendLogs([
+        { type: 'error', message: `[CDN Deploy FAILED] ${err.message}`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
+      ]);
+    } catch (_) {}
     process.exit(1);
   }
 }
