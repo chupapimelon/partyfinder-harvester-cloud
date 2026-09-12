@@ -92,7 +92,7 @@ async function compileDatabase() {
 
     const packed = packRecord(p);
     const pKey = `${p.name.toLowerCase()}-${(p.realmSlug || realmClean).replace(/[^a-z0-9]/g, '')}`;
-    playerLines.push(`        ["${pKey}"] = ${packed},`);
+    playerLines.push(`        P["${pKey}"] = ${packed};`);
   }
 
   const now = new Date();
@@ -118,8 +118,31 @@ async function compileDatabase() {
   }
   lines.push('    },');
   lines.push('    Players = {');
+  lines.push('    },');
+  lines.push('};');
+  lines.push('');
+  lines.push('local P = PF.Data_Live.Players;');
+  lines.push('');
 
-  const luaContent = lines.join('\n') + '\n' + playerLines.join('\n') + '\n    },\n};\n';
+  // Chunk players into batches of 4,000 to prevent Lua 5.1 constant table overflow (MAXARG_Bx limit)
+  const BATCH_SIZE = 4000;
+  let batchIndex = 0;
+  for (let i = 0; i < playerLines.length; i += BATCH_SIZE) {
+    batchIndex++;
+    lines.push('do');
+    lines.push(`    local function _b${batchIndex}()`);
+    const chunk = playerLines.slice(i, i + BATCH_SIZE);
+    lines.push(chunk.join('\n'));
+    lines.push('    end');
+    lines.push(`    _b${batchIndex}()`);
+    lines.push('end');
+    lines.push('');
+  }
+
+  lines.push('-- LIVE_INJECTIONS');
+  lines.push('');
+
+  const luaContent = lines.join('\n');
   const fileSizeBytes = Buffer.byteLength(luaContent, 'utf-8');
   const sha256 = crypto.createHash('sha256').update(luaContent).digest('hex');
 
