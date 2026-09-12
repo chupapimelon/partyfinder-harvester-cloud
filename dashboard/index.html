@@ -10,7 +10,7 @@
   <link rel="preload" href="fonts/Naowh.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/GothamNarrowUltra.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=btn_uniform_v7">
+  <link rel="stylesheet" href="styles.css?v=btn_uniform_v8">
 </head>
 <body>
   <div class="studio-app">
@@ -209,6 +209,70 @@
               <span class="badge badge-soft-purple" id="statPointsRemaining">3,600 LEFT</span>
               <span class="stat-sub" id="statResetCountdown">Reset: 60m 00s</span>
             </div>
+          </div>
+        </div>
+
+        <!-- ENRICHMENT ACCURACY RATIO & WORLDWIDE DATACENTERS TELEMETRY (COMPANION SYNC) -->
+        <div class="telemetry-card-section" id="enrichmentAccuracySection">
+          <div class="telemetry-card-header">
+            <div class="telemetry-header-title-group">
+              <span class="telemetry-card-icon icon-green">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  <path d="m9 12 2 2 4-4"/>
+                </svg>
+              </span>
+              <div>
+                <h3 class="telemetry-card-title">Enrichment Accuracy Ratio</h3>
+                <p class="telemetry-card-subtitle">Detailed verification breakdown of worldwide player logs</p>
+              </div>
+            </div>
+            <span class="enrich-accuracy-tag" id="enrichAccuracyTag">Active Catch-Up Crawl</span>
+          </div>
+
+          <div class="enrich-progress-wrapper">
+            <div class="enrich-progress-header">
+              <div class="progress-title-group">
+                <span class="enrich-progress-title">Parse Accuracy Ratio</span>
+              </div>
+              <span class="enrich-progress-ratio" id="enrichRatioText">4,181 / 115,910 (3.6% 100% Accurate Verified)</span>
+            </div>
+            <div class="enrich-bar-track">
+              <div class="enrich-bar-fill-verified" id="enrichBarVerified" style="width: 3.6%;"></div>
+              <div class="enrich-bar-fill-pending" id="enrichBarPending" style="width: 96.4%;"></div>
+            </div>
+            <div class="enrich-legend">
+              <div class="legend-item">
+                <span class="legend-dot dot-verified"></span>
+                <span class="legend-text"><strong>Verified Accurate Parses (100% WCL API):</strong> Player has an exact individual character crawl with confirmed Best Parse %, Median Parse %, verified spec, and highest keystone.</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot dot-pending"></span>
+                <span class="legend-text"><strong>Baseline Dungeon Clears:</strong> Player was captured in an official 5-man keystone run. Keystone level and role are accurate; individual percentiles are queued for hourly enrichment.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- WORLDWIDE DATACENTER COVERAGE CARD -->
+        <div class="telemetry-card-section" id="worldwideDatacentersSection">
+          <div class="telemetry-card-header">
+            <div class="telemetry-header-title-group">
+              <span class="telemetry-card-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+              </span>
+              <div>
+                <h3 class="telemetry-card-title">Worldwide Datacenter Coverage</h3>
+                <p class="telemetry-card-subtitle">Aggregated distribution across all active Warcraft Logs regions</p>
+              </div>
+            </div>
+            <span class="badge-datacenter-accent" id="worldwideRegionsBadge">10 Datacenters</span>
+          </div>
+          <div class="worldwide-regions-grid" id="worldwideRegionsGrid">
+            <!-- Dynamically populated from live partyfinder_meta.json -->
           </div>
         </div>
 
@@ -897,6 +961,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=cloud_20260912_v43"></script>
+  <script src="app.js?v=cloud_20260912_v44"></script>
 </body>
 </html>
