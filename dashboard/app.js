@@ -683,6 +683,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (data.ok) {
           latestHarvestStatus = data;
           updateTelemetryHUD(data);
+          updateActiveEngineBadge(data.mode);
 
           // Populate recent enriched player cards and stream into Real-Time Console
           const recents = data.recentEnriched || data.lastTickResult?.recentEnriched || [];
@@ -964,6 +965,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     return floored.map(f => (f / 10).toFixed(1));
   }
 
+  function updateActiveEngineBadge(modeOverride = null) {
+    if (!autoPilotRealmCount) return;
+    const mode = modeOverride || latestHarvestStatus?.mode || activeManualMode || 'dual';
+    const reg = (currentActiveRegion || 'US').toUpperCase();
+    const rCount = rawRealmsData?.[reg]?.length || 247;
+
+    if (mode === 'wcl') {
+      autoPilotRealmCount.textContent = 'WCL TURBO';
+      autoPilotRealmCount.style.color = 'var(--cyan)';
+      autoPilotRealmCount.title = `Active Engine: Warcraft Logs Combat Parse Enricher • Coverage: ${rCount} ${reg} Realms`;
+    } else if (mode === 'raiderio') {
+      autoPilotRealmCount.textContent = 'R.IO CRAWLER';
+      autoPilotRealmCount.style.color = 'var(--amber)';
+      autoPilotRealmCount.title = `Active Engine: Raider.IO Leaderboard Discovery Scraper • Coverage: ${rCount} ${reg} Realms`;
+    } else {
+      autoPilotRealmCount.textContent = 'DUAL-ENGINE';
+      autoPilotRealmCount.style.color = '#10b981';
+      autoPilotRealmCount.title = `Active Engine: Autonomous Dual-Engine (WCL + Raider.IO) • Coverage: ${rCount} ${reg} Realms`;
+    }
+  }
+
   function updateRegionRealms(regionCode) {
     if (!rawRealmsData || !rawRealmsData[regionCode]) return;
     const realms = rawRealmsData[regionCode];
@@ -998,7 +1020,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (autoPilotRealmCount) {
-      autoPilotRealmCount.textContent = `0 / ${realms.length}`;
+      updateActiveEngineBadge();
     }
 
     // Populate with badges and population info
