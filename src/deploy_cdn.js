@@ -29,26 +29,7 @@ const SPEC_TO_INDEX = {
   71: 37, 72: 38, 73: 39,
 };
 
-const SUBREGION_MAPPING = {
-  'area-52': 'CHI', 'illidan': 'CHI', 'sargeras': 'CHI', 'stormrage': 'CHI',
-  'tichondrius': 'LA', 'proudmoore': 'LA', 'kiljaeden': 'LA',
-  'frostmourne': 'OCE', 'barthilas': 'OCE',
-  'tarren-mill': 'EU-ENG', 'twisting-nether': 'EU-ENG', 'kazzak': 'EU-ENG', 'draenor': 'EU-ENG', 'silvermoon': 'EU-ENG',
-  'blackrock': 'EU-GER', 'antonidas': 'EU-GER',
-  'hyjal': 'EU-FRA',
-  'ragnaros': 'MEX', 'azralon': 'BZL', 'nemesis': 'BZL',
-  'azshara': 'KR',
-};
-
-function getSubRegion(serverSlug, region = 'US') {
-  const clean = String(serverSlug || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
-  if (SUBREGION_MAPPING[clean]) return SUBREGION_MAPPING[clean];
-  const reg = String(region || 'US').toUpperCase();
-  if (reg === 'EU') return 'EU-Oth';
-  if (reg === 'KR') return 'KR';
-  if (reg === 'TW') return 'TW';
-  return 'Oth';
-}
+const { getSubRegion } = require('./subregion_engine');
 
 function packRecord(record) {
   const specIndex = SPEC_TO_INDEX[record.specId] || 0;
@@ -89,6 +70,8 @@ async function compileDatabase() {
 
   let enriched = 0, pending = 0, totalUnique = 0;
   const subRegionCounts = {};
+  const regionCounts = { US: 0, EU: 0, KR: 0, TW: 0 };
+  const regionalBreakdown = { US: {}, EU: {}, KR: {}, TW: {} };
   const playerLines = [];
   const levelCap = getCurrentLevelCap();
 
@@ -99,9 +82,13 @@ async function compileDatabase() {
     if (p.enriched) enriched++;
     else pending++;
 
+    const pRegion = String(p.region || 'US').toUpperCase();
     const realmClean = (p.realmSlug || p.realm || '').toLowerCase().replace(/['\s]/g, '-');
-    const subReg = getSubRegion(realmClean, p.region || 'US');
+    const subReg = getSubRegion(realmClean, pRegion);
     subRegionCounts[subReg] = (subRegionCounts[subReg] || 0) + 1;
+    regionCounts[pRegion] = (regionCounts[pRegion] || 0) + 1;
+    if (!regionalBreakdown[pRegion]) regionalBreakdown[pRegion] = {};
+    regionalBreakdown[pRegion][subReg] = (regionalBreakdown[pRegion][subReg] || 0) + 1;
 
     const packed = packRecord(p);
     const pKey = `${p.name.toLowerCase()}-${(p.realmSlug || realmClean).replace(/[^a-z0-9]/g, '')}`;
@@ -145,6 +132,8 @@ async function compileDatabase() {
     enrichedPlayers: enriched,
     pendingEnrichment: pending,
     subRegionCounts,
+    regionCounts,
+    regionalBreakdown,
     season: 'Midnight Season 2 & Liberation of Undermine (Global Worldwide)',
     zoneId: 55,
     downloadUrl: 'https://imongmama.online/data/PartyFinder_Data_Live.lua',
