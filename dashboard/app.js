@@ -659,12 +659,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             mode: data.mode || 'wcl',
             recentEnriched: data.recentEnriched || data.lastTickResult?.recentEnriched || [],
             logs: data.logs || [],
-            rateLimit: data.rateLimit || {
-              limitPerHour: 3600,
-              pointsSpentThisHour: 720,
-              pointsRemaining: 2880,
+            rateLimit: data.rateLimit || (currentWclRateLimit ? currentWclRateLimit : {
+              limitPerHour: 18000,
+              pointsSpentThisHour: 0,
+              pointsRemaining: 18000,
               pointsResetIn: 3600
-            },
+            }),
             regionsSummary: {
               US: { harvested: totalScraped, enriched: enrichedNum },
               EU: { harvested: 0, enriched: 0 },
@@ -3215,12 +3215,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!rlData) return;
     currentWclRateLimit = rlData;
 
-    const limit = rlData.limitPerHour || 3600;
-    const spent = rlData.pointsSpentThisHour || 0;
+    const limit = Number(rlData.limitPerHour) || 18000;
+    const spent = Number(rlData.pointsSpentThisHour) || 0;
     const remaining = Math.max(0, limit - spent);
-    const resetIn = rlData.pointsResetIn || 3600;
-    const isUpgraded = rlData.isUpgraded || limit > 3600;
-    const tierName = limit >= 18000 ? 'Platinum' : (limit >= 9000 ? 'Gold' : 'Standard');
+    const resetIn = Number(rlData.pointsResetIn) || 3600;
+    const isPlatinum = limit >= 18000;
+    const tierName = isPlatinum ? 'Platinum' : (limit >= 9000 ? 'Gold' : 'Standard');
 
     // 1. Update Bottom Status Bar Pill
     if (wclQuotaText) {
@@ -3238,12 +3238,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       statPointsLimit.textContent = `/ ${limit.toLocaleString()} pts`;
     }
     if (statPointsRemaining) {
-      if (isUpgraded) {
+      if (isPlatinum) {
         statPointsRemaining.className = 'badge badge-soft-warning';
-        statPointsRemaining.textContent = `👑 PLATINUM (${remaining.toLocaleString()} LEFT)`;
+        if (remaining <= 50) {
+          statPointsRemaining.textContent = `👑 PLATINUM (HOURLY CEILING REACHED - STANDBY)`;
+        } else {
+          statPointsRemaining.textContent = `👑 PLATINUM (${Math.round(remaining).toLocaleString()} LEFT)`;
+        }
       } else {
         statPointsRemaining.className = 'badge badge-soft-purple';
-        statPointsRemaining.textContent = `${remaining.toLocaleString()} LEFT`;
+        statPointsRemaining.textContent = `${Math.round(remaining).toLocaleString()} LEFT`;
       }
     }
 
@@ -3333,10 +3337,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     return currentWclRateLimit;
   }
 
-  // Periodic 15s sync with Warcraft Logs official rate limit counter
-  setInterval(() => {
-    fetchLiveWclRateLimit(null, true).catch(() => {});
-  }, 15000);
+  // Note: Aggressive 15s polling disabled to prevent wasting points (each call burns points against the hourly budget).
+  // The dashboard receives authentic live rateLimit telemetry directly from R2 status.json pushed by the cloud runner.
+  // fetchLiveWclRateLimit is only invoked on initial boot or manually via "Test WCL Connection".
+  // setInterval(() => { fetchLiveWclRateLimit(null, true).catch(() => {}); }, 15000);
 
   // Toggle Password Visibilities
   if (btnToggleSecret && cfgWclClientSecret) {
