@@ -2564,21 +2564,63 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tokenData = await tokenRes.json();
         token = tokenData && tokenData[0] ? tokenData[0].value : null;
       }
-      if (token) {
-        fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'PartyFinder-Harvester-Cloud'
-          },
-          body: JSON.stringify({ ref: 'main' })
-        }).then(res => {
-          if (res.ok) {
-            appendLog('info', '⚡ [Cloud Worker Dispatch] Cloud worker dispatched to GitHub Actions (10 players/min).');
+      if (!token) return;
+
+      const ghHeaders = {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'PartyFinder-Harvester-Cloud'
+      };
+
+      // Self-Healing Guard: Inspect active runs to auto-clear zombie stalls and avoid queue collision
+      try {
+        const runsRes = await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/runs?per_page=6', {
+          headers: ghHeaders
+        });
+        if (runsRes && runsRes.ok) {
+          const runsData = await runsRes.json();
+          const runs = runsData.workflow_runs || [];
+
+          // 1. Auto-clear zombie queued/pending runs (> 4 minutes old) blocking the concurrency slot
+          for (const r of runs) {
+            const isStuckState = (r.status === 'queued' || r.status === 'pending');
+            const runAgeMs = now - new Date(r.created_at).getTime();
+            if (isStuckState && runAgeMs > 240000) {
+              console.warn(`[Auto-Heal] Detected stuck ${r.status} run #${r.id} (${Math.round(runAgeMs / 1000)}s old). Cancelling zombie lock...`);
+              appendLog('warn', `🛡️ [Auto-Heal] Clearing zombie run #${r.id} (${Math.round(runAgeMs / 1000)}s in ${r.status}) to unblock harvester queue.`);
+              await fetch(`https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/runs/${r.id}/cancel`, {
+                method: 'POST',
+                headers: ghHeaders
+              }).catch(() => {});
+            }
           }
-        }).catch(() => {});
+
+          // 2. If a healthy run is currently active (in_progress), skip dispatching unless forced
+          const activeRun = runs.find(r => r.status === 'in_progress');
+          if (activeRun && !force) {
+            return;
+          }
+
+          // 3. If a fresh queued/pending run was just created within the last 2 minutes, wait for it
+          const recentQueuedRun = runs.find(r => (r.status === 'queued' || r.status === 'pending') && (now - new Date(r.created_at).getTime() < 120000));
+          if (recentQueuedRun && !force) {
+            return;
+          }
+        }
+      } catch (checkErr) {
+        console.warn('[Auto-Heal Run Inspection Notice]', checkErr.message);
       }
+
+      // Safe to dispatch new harvester run
+      fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
+        method: 'POST',
+        headers: ghHeaders,
+        body: JSON.stringify({ ref: 'main' })
+      }).then(res => {
+        if (res.ok) {
+          appendLog('info', '⚡ [Cloud Worker Dispatch] Cloud worker dispatched to GitHub Actions (24/7 Turbo).');
+        }
+      }).catch(() => {});
     } catch (e) {}
   }
 

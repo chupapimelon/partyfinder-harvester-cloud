@@ -541,13 +541,38 @@ async function main() {
 
       if ((isHarvesterActive || isManualActive) && ghEntry && ghEntry.value) {
         console.log('[Autonomous Chain] Harvester/Manual state is ACTIVE. Dispatching next 5-minute cloud cycle...');
+        const ghHeaders = {
+          'Authorization': `Bearer ${ghEntry.value}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'PartyFinder-Autonomous-Worker'
+        };
+
+        // Self-Healing Guard: Clear any zombie stalled runs (> 4 minutes old) before dispatching
+        try {
+          const checkRes = await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/runs?per_page=5', {
+            headers: ghHeaders
+          });
+          if (checkRes && checkRes.ok) {
+            const data = await checkRes.json();
+            const now = Date.now();
+            for (const r of (data.workflow_runs || [])) {
+              const isStalled = (r.status === 'queued' || r.status === 'pending');
+              if (isStalled && (now - new Date(r.created_at).getTime() > 240000)) {
+                console.log(`[Autonomous Chain] Cancelling stalled zombie run #${r.id} (${r.status}) to unblock queue...`);
+                await fetch(`https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/runs/${r.id}/cancel`, {
+                  method: 'POST',
+                  headers: ghHeaders
+                }).catch(() => {});
+              }
+            }
+          }
+        } catch (healErr) {
+          console.warn('[Autonomous Chain Heal Notice]', healErr.message);
+        }
+
         await fetch('https://api.github.com/repos/chupapimelon/partyfinder-harvester-cloud/actions/workflows/harvest.yml/dispatches', {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ghEntry.value}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'PartyFinder-Autonomous-Worker'
-          },
+          headers: ghHeaders,
           body: JSON.stringify({ ref: 'main' })
         });
       }
