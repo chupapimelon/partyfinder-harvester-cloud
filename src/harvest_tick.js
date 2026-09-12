@@ -15,6 +15,7 @@ const { scanRaiderIoPages } = require('./raiderio_scraper');
 const { detectCurrentSeason, getCurrentSeason, getCurrentLevelCap } = require('./season_detector');
 const { enrichBatch, checkLiveRateLimit } = require('./wcl_enricher');
 const { generateAndUploadPages, uploadStatusOnly } = require('./page_generator');
+const { getRealmPriority, isMegaRealm } = require('./realm_indexer');
 
 // WCL credentials — from GitHub Secrets env vars or Supabase vault
 const WCL_CLIENT_ID = process.env.WCL_CLIENT_ID;
@@ -54,6 +55,14 @@ async function main() {
     const enrichedBefore = Object.values(registry.players).filter(p => p.enriched).length;
     const pendingBefore = totalBefore - enrichedBefore;
     console.log(`[R2] Loaded: ${totalBefore} players (${enrichedBefore} enriched, ${pendingBefore} pending)`);
+
+    // Backfill realmPriority and isMega on all player records
+    for (const p of Object.values(registry.players || {})) {
+      if (!p.realmPriority) {
+        p.realmPriority = getRealmPriority(region, p.realmSlug || p.realm);
+        p.isMega = p.realmPriority === 1;
+      }
+    }
 
     // Check if Clean Slate Reset was requested
     try {
@@ -206,11 +215,11 @@ async function main() {
       const curPending = curTotal - curEnriched;
 
       const allRegPlayers = Object.values(registry.players || {});
-      const p1Players = allRegPlayers.filter(p => p.realmPriority === 1 || p.isMega);
+      const p1Players = allRegPlayers.filter(p => p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm));
       const p1EnrichedCount = p1Players.filter(p => p.enriched).length;
       const p1PendingCount = Math.max(0, p1Players.length - p1EnrichedCount);
       const maintenanceQueue = allRegPlayers.filter(p => p.needsReenrichment).length;
-      const p2p3Players = allRegPlayers.filter(p => (p.realmPriority > 1 || (!p.isMega && p.realmPriority !== 1)));
+      const p2p3Players = allRegPlayers.filter(p => p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm)));
       const p2p3EnrichedCount = p2p3Players.filter(p => p.enriched).length;
 
       let cyclePhase = 'p1_mega';
