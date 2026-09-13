@@ -27,6 +27,10 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
 
   console.log(`[PageGen] Generating ${totalPages} pages for ${reg.toUpperCase()} (${totalPlayers} players)...`);
 
+  // 2. Generate paginated player files
+  // Pre-generate the top active pages (first 200 pages = top 10,000 ranked pushers)
+  const pagesToGenerate = Math.min(totalPages, 200);
+
   // 1. Generate meta.json
   const meta = {
     region: reg.toUpperCase(),
@@ -35,15 +39,13 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
     pendingEnrichment: pendingCount,
     totalPages,
     pageSize: PAGE_SIZE,
+    cachedPages: pagesToGenerate,
     lastScannedPage: registry.lastScannedPage || 0,
     updatedAt: Date.now(),
     updatedAtISO: new Date().toISOString(),
   };
   await r2.putJSON(`api/${reg}/meta.json`, meta);
 
-  // 2. Generate paginated player files
-  // Only regenerate the top active pages (first 20 pages = top 1,000 players) on regular ticks to save R2 writes and prevent job timeouts
-  const pagesToGenerate = Math.min(totalPages, 20);
   const uploadPromises = [];
   for (let i = 0; i < pagesToGenerate; i++) {
     const pageNum = String(i + 1).padStart(4, '0');
@@ -73,8 +75,8 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
       players: pageData,
     }));
 
-    // Batch uploads in groups of 20 to avoid overwhelming R2
-    if (uploadPromises.length >= 20) {
+    // Batch uploads in groups of 25 for fast parallel transfer
+    if (uploadPromises.length >= 25) {
       await Promise.all(uploadPromises);
       uploadPromises.length = 0;
     }

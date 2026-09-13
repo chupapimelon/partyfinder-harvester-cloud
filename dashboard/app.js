@@ -559,6 +559,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let playerDatabase = [];
   let metaTotalPlayers = 0;
   let metaTotalPages = 0;
+  let metaCachedPages = 200;
   let isDatabaseLoading = false;
   const loadedPagesSet = new Set();
   const searchIndexCache = new Map();
@@ -612,6 +613,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (meta.totalPlayers) {
               metaTotalPlayers = Number(meta.totalPlayers);
               metaTotalPages = Number(meta.totalPages) || Math.ceil(metaTotalPlayers / itemsPerPage);
+              metaCachedPages = Number(meta.cachedPages) || 200;
               latestHarvestStatus = latestHarvestStatus || {};
               latestHarvestStatus.totalPlayers = metaTotalPlayers;
               latestHarvestStatus.totalTrackedPlayers = metaTotalPlayers;
@@ -2006,11 +2008,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                       (dbParseFilter && parseFloat(dbParseFilter.value) > 0) ||
                       (dbStatusFilter && dbStatusFilter.value !== 'all');
 
+    const maxAllowedPage = (!searchVal && !hasFilter) ? (metaCachedPages || 200) : (metaTotalPages || 1);
+    if (currentPage >= maxAllowedPage) {
+      return;
+    }
+
     if (IS_CLOUD && !searchVal && !hasFilter) {
-      const neededCount = (currentPage + 1) * itemsPerPage;
-      if (playerDatabase.length < neededCount && metaTotalPages > 0 && currentPage < metaTotalPages) {
-        const pageNum = currentPage + 1;
+      const pageNum = currentPage + 1;
+      const neededCount = pageNum * itemsPerPage;
+      if (playerDatabase.length < neededCount && pageNum <= maxAllowedPage) {
         if (!loadedPagesSet.has(pageNum)) {
+          isDatabaseLoading = true;
+          renderDatabaseTable();
           const reg = (currentActiveRegion || 'US').toLowerCase();
           const pStr = String(pageNum).padStart(4, '0');
           try {
@@ -2031,7 +2040,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
               }
             }
-          } catch (e) {}
+          } catch (e) {
+          } finally {
+            isDatabaseLoading = false;
+          }
         }
       }
     }
@@ -2079,8 +2091,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pageItems.length === 0) {
       if (isDatabaseLoading) {
         dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database...</td></tr>`;
-      } else {
+      } else if (hasFilter) {
         dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">No players matching filter criteria.</td></tr>`;
+      } else {
+        const preloadedCount = (metaCachedPages || 200) * itemsPerPage;
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;">
+          <div style="font-size: 15px; font-weight: 600; color: var(--text-main); margin-bottom: 6px;">Top ${preloadedCount.toLocaleString()} Ranked Pushers Pre-Loaded</div>
+          <div style="font-size: 13px; color: var(--text-dim);">To search or view any of the other <strong>${(metaTotalPlayers || 520000).toLocaleString()}</strong> players, use the <strong>Search Character</strong> box above.</div>
+        </td></tr>`;
       }
     } else {
       pageItems.forEach((p) => {
@@ -2152,7 +2170,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     dbPageInfo.textContent = `Showing ${total === 0 ? 0 : start + 1} to ${Math.min(start + itemsPerPage, total)} of ${total.toLocaleString()} entries`;
     dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages.toLocaleString()}`;
     btnDbPrevPage.disabled = currentPage <= 1;
-    btnDbNextPage.disabled = currentPage >= totalPages;
+    const maxNavPage = (!hasFilter && !searchVal) ? Math.min(totalPages, metaCachedPages || 200) : totalPages;
+    btnDbNextPage.disabled = currentPage >= maxNavPage;
 
     // Sync telemetry
     updateTelemetryHUD();
