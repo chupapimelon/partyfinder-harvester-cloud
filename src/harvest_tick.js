@@ -56,6 +56,21 @@ async function main() {
     const pendingBefore = totalBefore - enrichedBefore;
     console.log(`[R2] Loaded: ${totalBefore} players (${enrichedBefore} enriched, ${pendingBefore} pending)`);
 
+    // Purge legacy 0-score / 0-run players from registry
+    let legacyPurgedCount = 0;
+    for (const [key, p] of Object.entries(registry.players || {})) {
+      if (!p.rioScore || p.rioScore <= 0 || !p.runsCount || p.runsCount <= 0) {
+        delete registry.players[key];
+        legacyPurgedCount++;
+      }
+    }
+    if (legacyPurgedCount > 0) {
+      console.log(`[R2 Cleanup] Purged ${legacyPurgedCount.toLocaleString()} legacy 0-score / 0-run players from registry.`);
+      logs.push(makeLog('warn', `[Cleanup] Purged ${legacyPurgedCount.toLocaleString()} inactive/0-score players from registry.`));
+      registry.totalUnique = Object.keys(registry.players).length;
+      await r2.savePlayerRegistry(region, registry);
+    }
+
     // Backfill realmPriority and isMega on all player records
     for (const p of Object.values(registry.players || {})) {
       if (!p.realmPriority) {
@@ -364,10 +379,11 @@ async function main() {
         const endRank = (endPage + 1) * 100;
         const pageSpan = (endPage - startPage + 1);
 
+        const skipMsg = result.skippedNoScore > 0 ? ` (${result.skippedNoScore} unranked/0-score skipped)` : '';
         if (newFound > 0) {
-          logs.push(makeLog('success', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): +${newFound} newly added. Database: ${totalInReg.toLocaleString()} players.`));
+          logs.push(makeLog('success', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): +${newFound} newly added${skipMsg}. Database: ${totalInReg.toLocaleString()} players.`));
         } else {
-          logs.push(makeLog('info', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): Verified ${result.charactersProcessed || (pageSpan * 100)} characters (all ${totalInReg.toLocaleString()} pushers already tracked in database).`));
+          logs.push(makeLog('info', `[Raider.IO] Cloud worker scanned ranks #${startRank.toLocaleString()}-#${endRank.toLocaleString()} (Pages ${startPage}-${endPage}, ${pageSpan} pages): Verified ${result.charactersProcessed || (pageSpan * 100)} characters${skipMsg} (all ${totalInReg.toLocaleString()} pushers already tracked in database).`));
         }
 
         const tickDiscovered = (result.discovered || []).map(p => ({
@@ -420,6 +436,7 @@ async function main() {
           mode: 'raiderio',
           newPlayersCount: result.newPlayersCount,
           updatedPlayersCount: result.updatedPlayersCount,
+          skippedNoScore: result.skippedNoScore,
           lastScannedPage: result.lastScannedPage,
           nextPage: result.nextPage,
         };

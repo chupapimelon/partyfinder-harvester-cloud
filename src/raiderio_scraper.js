@@ -34,6 +34,7 @@ async function scanRaiderIoPages(registry, options = {}) {
   let newPlayersCount = 0;
   let updatedPlayersCount = 0;
   let skippedLowLevelCount = 0;
+  let skippedNoScoreCount = 0;
   let lastScannedPage = pageStart;
   let fetchError = null;
   const discoveredList = [];
@@ -99,6 +100,13 @@ async function scanRaiderIoPages(registry, options = {}) {
       break;
     }
 
+    // Early Wrap-Around: If the highest ranked player on this page has 0 score, all subsequent players and pages have 0 score.
+    if ((rankedList[0]?.score || 0) <= 0) {
+      console.log(`[RaiderIO] Page ${p} begins with 0-score players. End of active pushers reached. Wrapping back to Rank #1 (Page 0)...`);
+      registry.lastScannedPage = 0;
+      break;
+    }
+
     lastScannedPage = p;
     registry.lastScannedPage = p + 1;
 
@@ -109,6 +117,15 @@ async function scanRaiderIoPages(registry, options = {}) {
       // Filter characters below current expansion level cap (e.g. level 80 from old expansions)
       if (char.level && char.level < levelCap) {
         skippedLowLevelCount++;
+        continue;
+      }
+
+      const overallScore = Math.round((item.score || 0) * 10) / 10;
+      const runs = item.runs || [];
+
+      // Option A Filter: Strictly require active Raider.IO score (> 0) and at least 1 recorded run
+      if (overallScore <= 0 || runs.length === 0) {
+        skippedNoScoreCount++;
         continue;
       }
 
@@ -123,10 +140,8 @@ async function scanRaiderIoPages(registry, options = {}) {
       const className = char.class?.name || 'Unknown';
       const specName = char.spec?.name || 'Unknown';
       const specId = char.spec?.id || 0;
-      const overallScore = Math.round((item.score || 0) * 10) / 10;
 
       let highestKey = 0;
-      const runs = item.runs || [];
       for (const run of runs) {
         if ((run.mythicLevel || 0) > highestKey) {
           highestKey = run.mythicLevel;
@@ -149,9 +164,9 @@ async function scanRaiderIoPages(registry, options = {}) {
           spec: specName,
           specId: specId,
           role: role,
-          highestKey: highestKey || 20,
+          highestKey: highestKey || 0,
           rioScore: overallScore,
-          runsCount: runs.length || 8,
+          runsCount: runs.length,
           firstDiscoveredAt: Date.now(),
           lastSeenAt: Date.now(),
           enriched: false,
@@ -194,6 +209,7 @@ async function scanRaiderIoPages(registry, options = {}) {
     newPlayersCount,
     updatedPlayersCount,
     skippedLowLevel: skippedLowLevelCount,
+    skippedNoScore: skippedNoScoreCount,
     season,
     levelCap,
     startPage: pageStart,
