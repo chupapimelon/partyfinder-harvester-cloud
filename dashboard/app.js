@@ -561,7 +561,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let metaTotalPages = 0;
   let metaCachedPages = 200;
   let isDatabaseLoading = false;
+  let isFetchingPage = false;
   const loadedPagesSet = new Set();
+  const pageMapCache = new Map();
   const searchIndexCache = new Map();
   let searchDebounceTimer = null;
 
@@ -640,7 +642,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           const data = await res.json();
           const rawList = Array.isArray(data.players) ? data.players : (Array.isArray(data) ? data : []);
           if (rawList.length > 0) {
-            playerDatabase = rawList.map(p => normalizePlayerRecord(p, reg));
+            const normalized = rawList.map(p => normalizePlayerRecord(p, reg));
+            pageMapCache.set(1, normalized);
+            playerDatabase = [...normalized];
             loadedPagesSet.add(1);
             renderDatabaseTable();
             updateTelemetryHUD();
@@ -694,6 +698,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (Array.isArray(pData.players)) {
               loadedPagesSet.add(pageNum);
               const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
+              pageMapCache.set(pageNum, newPlayers);
               const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
               for (const np of newPlayers) {
                 const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
@@ -1993,13 +1998,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   btnDbPrevPage.addEventListener('click', () => {
+    if (isFetchingPage) return;
     if (currentPage > 1) {
       currentPage--;
       renderDatabaseTable();
     }
   });
 
+  async function prefetchCloudPage(pageNum) {
+    if (pageMapCache.has(pageNum)) return;
+    const reg = (currentActiveRegion || 'US').toLowerCase();
+    const pStr = String(pageNum).padStart(4, '0');
+    try {
+      let pRes = await fetch(`/api/${reg}/page_${pStr}.json`).catch(() => null);
+      if (!pRes || !pRes.ok) pRes = await fetch(`${R2_BASE}/api/${reg}/page_${pStr}.json`).catch(() => null);
+      if (pRes && pRes.ok) {
+        const pData = await pRes.json();
+        if (Array.isArray(pData.players)) {
+          loadedPagesSet.add(pageNum);
+          const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
+          pageMapCache.set(pageNum, newPlayers);
+          const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
+          for (const np of newPlayers) {
+            const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
+            if (!existingKeys.has(k)) {
+              existingKeys.add(k);
+              playerDatabase.push(np);
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   btnDbNextPage.addEventListener('click', async () => {
+    if (isFetchingPage) return;
+
     const searchVal = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
     const hasFilter = (dbRealmFilter && dbRealmFilter.value !== 'all') ||
                       (dbTierFilter && dbTierFilter.value !== 'all') ||
@@ -2008,47 +2042,69 @@ document.addEventListener('DOMContentLoaded', async () => {
                       (dbParseFilter && parseFloat(dbParseFilter.value) > 0) ||
                       (dbStatusFilter && dbStatusFilter.value !== 'all');
 
-    const maxAllowedPage = (!searchVal && !hasFilter) ? (metaCachedPages || 200) : (metaTotalPages || 1);
+    const maxAllowedPage = (!searchVal && !hasFilter) ? Math.min(metaTotalPages || 1, metaCachedPages || 200) : (metaTotalPages || 1);
     if (currentPage >= maxAllowedPage) {
       return;
     }
 
+    const targetPage = currentPage + 1;
+
     if (IS_CLOUD && !searchVal && !hasFilter) {
-      const pageNum = currentPage + 1;
-      const neededCount = pageNum * itemsPerPage;
-      if (playerDatabase.length < neededCount && pageNum <= maxAllowedPage) {
-        if (!loadedPagesSet.has(pageNum)) {
-          isDatabaseLoading = true;
-          renderDatabaseTable();
-          const reg = (currentActiveRegion || 'US').toLowerCase();
-          const pStr = String(pageNum).padStart(4, '0');
-          try {
-            let pRes = await fetch(`/api/${reg}/page_${pStr}.json`).catch(() => null);
-            if (!pRes || !pRes.ok) pRes = await fetch(`${R2_BASE}/api/${reg}/page_${pStr}.json`).catch(() => null);
-            if (pRes && pRes.ok) {
-              const pData = await pRes.json();
-              if (Array.isArray(pData.players)) {
-                loadedPagesSet.add(pageNum);
-                const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
-                const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
-                for (const np of newPlayers) {
-                  const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
-                  if (!existingKeys.has(k)) {
-                    existingKeys.add(k);
-                    playerDatabase.push(np);
-                  }
+      if (!pageMapCache.has(targetPage) && targetPage <= maxAllowedPage) {
+        isFetchingPage = true;
+        isDatabaseLoading = true;
+        btnDbNextPage.disabled = true;
+        btnDbPrevPage.disabled = true;
+        renderDatabaseTable();
+
+        const reg = (currentActiveRegion || 'US').toLowerCase();
+        const pStr = String(targetPage).padStart(4, '0');
+        let success = false;
+        try {
+          let pRes = await fetch(`/api/${reg}/page_${pStr}.json`).catch(() => null);
+          if (!pRes || !pRes.ok) pRes = await fetch(`${R2_BASE}/api/${reg}/page_${pStr}.json`).catch(() => null);
+          if (pRes && pRes.ok) {
+            const pData = await pRes.json();
+            if (Array.isArray(pData.players) && pData.players.length > 0) {
+              loadedPagesSet.add(targetPage);
+              const newPlayers = pData.players.map(p => normalizePlayerRecord(p, reg));
+              pageMapCache.set(targetPage, newPlayers);
+              const existingKeys = new Set(playerDatabase.map(x => `${x.name.toLowerCase()}#${x.realm.toLowerCase()}`));
+              for (const np of newPlayers) {
+                const k = `${np.name.toLowerCase()}#${np.realm.toLowerCase()}`;
+                if (!existingKeys.has(k)) {
+                  existingKeys.add(k);
+                  playerDatabase.push(np);
                 }
               }
+              success = true;
             }
-          } catch (e) {
-          } finally {
-            isDatabaseLoading = false;
           }
+        } catch (e) {
+          console.warn('[Pagination] Failed to fetch page', targetPage, e);
+        } finally {
+          isFetchingPage = false;
+          isDatabaseLoading = false;
+        }
+
+        if (!success) {
+          renderDatabaseTable();
+          return;
         }
       }
+
+      currentPage = targetPage;
+      renderDatabaseTable();
+
+      // Proactively prefetch the next page in background for seamless navigation
+      const nextPrefetch = currentPage + 1;
+      if (nextPrefetch <= maxAllowedPage && !pageMapCache.has(nextPrefetch)) {
+        prefetchCloudPage(nextPrefetch);
+      }
+      return;
     }
 
-    currentPage++;
+    currentPage = targetPage;
     renderDatabaseTable();
   });
 
@@ -2063,34 +2119,52 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const hasFilter = searchVal || realmVal !== 'all' || tierVal !== 'all' || roleVal !== 'all' || classVal !== 'all' || minParseVal > 0 || statusVal !== 'all';
 
-    const filtered = playerDatabase.filter((p) => {
-      if (searchVal && !p.name.toLowerCase().includes(searchVal)) return false;
-      if (realmVal !== 'all' && p.realm !== realmVal) return false;
-      if (tierVal !== 'all') {
-        const pTier = getRealmPriority(p.realm);
-        if (String(pTier) !== tierVal) return false;
+    let pageItems = [];
+    let total = 0;
+    let totalPages = 1;
+    let start = 0;
+
+    if (!hasFilter && IS_CLOUD) {
+      total = metaTotalPlayers || (playerDatabase.length);
+      totalPages = metaTotalPages || Math.ceil(total / itemsPerPage) || 1;
+      const maxNavPage = Math.min(totalPages, metaCachedPages || 200);
+      if (currentPage > maxNavPage) currentPage = maxNavPage;
+
+      start = (currentPage - 1) * itemsPerPage;
+      pageItems = pageMapCache.get(currentPage) || [];
+      if (pageItems.length === 0 && playerDatabase.length >= start + itemsPerPage) {
+        pageItems = playerDatabase.slice(start, start + itemsPerPage);
       }
-      if (roleVal !== 'all' && p.role !== roleVal) return false;
-      if (classVal !== 'all' && p.class !== classVal) return false;
-      if (p.median < minParseVal) return false;
-      if (statusVal === 'enriched' && (!p.enriched || p.unlogged || p.median <= 0)) return false;
-      if (statusVal === 'unlogged' && !p.unlogged) return false;
-      if (statusVal === 'discovered' && (p.enriched || p.unlogged)) return false;
-      return true;
-    });
+    } else {
+      const filtered = playerDatabase.filter((p) => {
+        if (searchVal && !p.name.toLowerCase().includes(searchVal)) return false;
+        if (realmVal !== 'all' && p.realm !== realmVal) return false;
+        if (tierVal !== 'all') {
+          const pTier = getRealmPriority(p.realm);
+          if (String(pTier) !== tierVal) return false;
+        }
+        if (roleVal !== 'all' && p.role !== roleVal) return false;
+        if (classVal !== 'all' && p.class !== classVal) return false;
+        if (p.median < minParseVal) return false;
+        if (statusVal === 'enriched' && (!p.enriched || p.unlogged || p.median <= 0)) return false;
+        if (statusVal === 'unlogged' && !p.unlogged) return false;
+        if (statusVal === 'discovered' && (p.enriched || p.unlogged)) return false;
+        return true;
+      });
 
-    const total = hasFilter ? filtered.length : (metaTotalPlayers || filtered.length);
-    const totalPages = Math.ceil(total / itemsPerPage) || 1;
-    if (currentPage > totalPages) currentPage = totalPages;
+      total = filtered.length;
+      totalPages = Math.ceil(total / itemsPerPage) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
 
-    const start = (currentPage - 1) * itemsPerPage;
-    const pageItems = filtered.slice(start, start + itemsPerPage);
+      start = (currentPage - 1) * itemsPerPage;
+      pageItems = filtered.slice(start, start + itemsPerPage);
+    }
 
     dbTableBody.innerHTML = '';
 
     if (pageItems.length === 0) {
-      if (isDatabaseLoading) {
-        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database...</td></tr>`;
+      if (isDatabaseLoading || isFetchingPage) {
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Page ${currentPage}...</td></tr>`;
       } else if (hasFilter) {
         dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">No players matching filter criteria.</td></tr>`;
       } else {
@@ -2169,9 +2243,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     dbPageInfo.textContent = `Showing ${total === 0 ? 0 : start + 1} to ${Math.min(start + itemsPerPage, total)} of ${total.toLocaleString()} entries`;
     dbCurrentPageNum.textContent = `Page ${currentPage} of ${totalPages.toLocaleString()}`;
-    btnDbPrevPage.disabled = currentPage <= 1;
+    btnDbPrevPage.disabled = currentPage <= 1 || isFetchingPage;
     const maxNavPage = (!hasFilter && !searchVal) ? Math.min(totalPages, metaCachedPages || 200) : totalPages;
-    btnDbNextPage.disabled = currentPage >= maxNavPage;
+    btnDbNextPage.disabled = currentPage >= maxNavPage || isFetchingPage;
 
     // Sync telemetry
     updateTelemetryHUD();
