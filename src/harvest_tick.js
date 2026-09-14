@@ -365,7 +365,7 @@ async function main() {
         console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] Scanning Raider.IO leaderboards (Season: ${seasonInfo.slug}, Cap: ${seasonInfo.levelCap})...`);
         const result = await scanRaiderIoPages(registry, {
           region,
-          pageCount: 5,
+          pageCount: 25,
           season: seasonInfo.slug,
           levelCap: seasonInfo.levelCap,
         });
@@ -373,7 +373,7 @@ async function main() {
         const newFound = result.newPlayersCount || 0;
         accumulatedNewThisTick += newFound;
         const totalInReg = Object.keys(registry.players).length;
-        const startPage = result.startPage !== undefined ? result.startPage : (result.nextPage ? result.nextPage - 5 : result.lastScannedPage);
+        const startPage = result.startPage !== undefined ? result.startPage : (result.nextPage ? result.nextPage - 25 : result.lastScannedPage);
         const endPage = result.endPage !== undefined ? result.endPage : result.lastScannedPage;
         const startRank = (startPage * 100) + 1;
         const endRank = (endPage + 1) * 100;
