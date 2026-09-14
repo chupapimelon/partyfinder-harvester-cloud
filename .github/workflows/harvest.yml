@@ -2,8 +2,12 @@ name: PartyFinder Harvester
 
 on:
   schedule:
-    - cron: '*/5 * * * *'    # Every 5 minutes
+    - cron: '*/30 * * * *'   # Consolidated 30-minute schedule (48 runs/day, 83% fewer runs)
   workflow_dispatch:          # Manual trigger for testing
+
+permissions:
+  actions: write
+  contents: read
 
 concurrency:
   group: harvester-singleton
@@ -12,7 +16,7 @@ concurrency:
 jobs:
   harvest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     
     steps:
       - name: Checkout code
@@ -22,7 +26,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -38,3 +41,11 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           WCL_CLIENT_ID: ${{ secrets.WCL_CLIENT_ID }}
           WCL_CLIENT_SECRET: ${{ secrets.WCL_CLIENT_SECRET }}
+
+      - name: Auto-Prune Old Workflow Runs (>24h)
+        if: always()
+        run: node src/prune_runs.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+

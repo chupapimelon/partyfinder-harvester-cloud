@@ -164,12 +164,12 @@ async function main() {
     const detectedLimit = liveRateLimit?.limitPerHour || 3600;
     const isPlatinum = detectedLimit >= 18000;
 
-    // Adaptive parameters:
-    // Platinum (18k pts/hr): 10 micro-cycles of 80 players each (~800 players/tick) with 2s wait
-    // Free/Standard (3.6k pts/hr): 5 micro-cycles of 10 players each (50 players per tick = ~600/hr) with 48s wait
-    const TOTAL_CYCLES = isPlatinum ? 10 : 5;
-    const CYCLE_BATCH_SIZE = isPlatinum ? 80 : 10;
-    const CYCLE_WAIT_MS = isPlatinum ? 2000 : 48000;
+    // Adaptive parameters for 30-minute consolidated schedule:
+    // Platinum (18k pts/hr): 20 micro-cycles of 80 players (~1,600 players/tick) with 2s wait
+    // Free/Standard (3.6k pts/hr): 12 micro-cycles of 25 players (300 players per tick = ~600/hr) with 20s wait
+    const TOTAL_CYCLES = isPlatinum ? 20 : 12;
+    const CYCLE_BATCH_SIZE = isPlatinum ? 80 : 25;
+    const CYCLE_WAIT_MS = isPlatinum ? 2000 : 20000;
     const tierName = isPlatinum ? 'PLATINUM TURBO (18k pts/hr)' : 'FREE / STANDARD SAFE (3.6k pts/hr)';
 
     let currentWclRateLimit = liveRateLimit;
