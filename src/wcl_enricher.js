@@ -86,20 +86,27 @@ async function enrichBatch(registry, options = {}) {
 
   let candidatePlayers = [];
   if (targetPriority === 'maintenance') {
-    candidatePlayers = Object.values(registry.players).filter(p => p.needsReenrichment);
+    candidatePlayers = Object.values(registry.players).filter(p => p.needsReenrichment && (p.rioScore || 0) >= minScore);
+    // Graceful fallback: If no maintenance pushers left, fall back to P1, then P2/P3 so quota is never wasted
+    if (candidatePlayers.length === 0) {
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm)) && (p.rioScore || 0) >= minScore);
+    }
+    if (candidatePlayers.length === 0) {
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.rioScore || 0) >= minScore);
+    }
   } else if (targetPriority === 1) {
-    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm)));
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm)) && (p.rioScore || 0) >= minScore);
     // Fallback: If all P1 Mega Realm pushers are enriched, smoothly fall back to P2/P3 so quota is never wasted
     if (candidatePlayers.length === 0) {
-      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.rioScore || 0) >= minScore);
     }
   } else if (targetPriority === 'p2_p3') {
-    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm))));
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm))) && (p.rioScore || 0) >= minScore);
     if (candidatePlayers.length === 0) {
-      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+      candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.rioScore || 0) >= minScore);
     }
   } else {
-    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
+    candidatePlayers = Object.values(registry.players).filter(p => !p.enriched && (p.rioScore || 0) >= minScore);
   }
 
   // Filter candidates to active competitive pushers (>= minScore)
@@ -120,6 +127,7 @@ async function enrichBatch(registry, options = {}) {
   const token = await getWclAccessToken(options.clientId, options.clientSecret);
   const enrichedResults = [];
   let rateLimitExhausted = false;
+  let latestRateLimit = null;
 
   for (const player of targetBatch) {
     const cleanSlug = (player.realmSlug || player.realm || '')

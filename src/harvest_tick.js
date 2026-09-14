@@ -79,6 +79,21 @@ async function main() {
       }
     }
 
+    // Purge stale maintenance flags on sub-3000 score players
+    const MIN_ENRICH_SCORE = parseInt(process.env.MIN_ENRICH_SCORE || '3000', 10);
+    let staleMaintenanceCleared = 0;
+    for (const p of Object.values(registry.players || {})) {
+      if (p.needsReenrichment && (p.rioScore || 0) < MIN_ENRICH_SCORE) {
+        p.needsReenrichment = false;
+        staleMaintenanceCleared++;
+      }
+    }
+    if (staleMaintenanceCleared > 0) {
+      console.log(`[R2 Cleanup] Cleared stale needsReenrichment flag on ${staleMaintenanceCleared.toLocaleString()} players (< ${MIN_ENRICH_SCORE} score).`);
+      logs.push(makeLog('info', `[Cleanup] Cleared stale maintenance flag on ${staleMaintenanceCleared.toLocaleString()} non-competitive players.`));
+      await r2.savePlayerRegistry(region, registry);
+    }
+
     // Check if Clean Slate Reset was requested
     try {
       let isResetRequested = false;
@@ -225,17 +240,20 @@ async function main() {
         }
       } catch (e) {}
 
-      const curTotal = Object.keys(registry.players).length;
-      const curEnriched = Object.values(registry.players).filter(p => p.enriched).length;
-      const curPending = curTotal - curEnriched;
-
       const allRegPlayers = Object.values(registry.players || {});
-      const p1Players = allRegPlayers.filter(p => p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm));
-      const p1EnrichedCount = p1Players.filter(p => p.enriched).length;
-      const p1PendingCount = Math.max(0, p1Players.length - p1EnrichedCount);
-      const maintenanceQueue = allRegPlayers.filter(p => p.needsReenrichment).length;
-      const p2p3Players = allRegPlayers.filter(p => p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm)));
-      const p2p3EnrichedCount = p2p3Players.filter(p => p.enriched).length;
+      const eligiblePlayers = allRegPlayers.filter(p => (p.rioScore || 0) >= MIN_ENRICH_SCORE);
+      const eligibleEnriched = eligiblePlayers.filter(p => p.enriched).length;
+      const eligiblePending = Math.max(0, eligiblePlayers.length - eligibleEnriched);
+
+      const p1Eligible = eligiblePlayers.filter(p => p.realmPriority === 1 || p.isMega || isMegaRealm(region, p.realmSlug || p.realm));
+      const p1EnrichedCount = p1Eligible.filter(p => p.enriched).length;
+      const p1PendingCount = Math.max(0, p1Eligible.length - p1EnrichedCount);
+
+      const maintenanceQueue = eligiblePlayers.filter(p => p.needsReenrichment).length;
+
+      const p2p3Eligible = eligiblePlayers.filter(p => p.realmPriority > 1 || (!p.isMega && !isMegaRealm(region, p.realmSlug || p.realm)));
+      const p2p3EnrichedCount = p2p3Eligible.filter(p => p.enriched).length;
+      const p2p3PendingCount = Math.max(0, p2p3Eligible.length - p2p3EnrichedCount);
 
       let cyclePhase = 'p1_mega';
       let cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
@@ -245,20 +263,25 @@ async function main() {
         cyclePhase = 'maintenance';
         cyclePhaseTitle = 'PHASE 2: MEGA REALMS MAINTENANCE (WEEKLY REFRESH)';
         targetPriority = 'maintenance';
-      } else if (p1PendingCount > 0 && p1Players.length > 0) {
+      } else if (p1PendingCount > 0) {
         cyclePhase = 'p1_mega';
         cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
         targetPriority = 1;
-      } else {
+      } else if (p2p3PendingCount > 0) {
         cyclePhase = 'p2_p3';
         cyclePhaseTitle = 'PHASE 3: MID & LOW REALMS (P2/P3) HARVESTING';
         targetPriority = 'p2_p3';
+      } else {
+        cyclePhase = 'discovery';
+        cyclePhaseTitle = 'PHASE 4: RAIDER.IO DISCOVERY & LEADERBOARD CRAWL';
+        targetPriority = 'all';
       }
 
       // Determine operating mode: If manual override is active, force that mode.
-      // Otherwise, if WCL quota is exhausted, seamlessly pivot into Raider.IO Discovery Scraping!
+      // If eligible candidates exist and WCL quota is available, enrich with WCL.
+      // If all eligible pushers are enriched (eligiblePending === 0) or WCL quota is exhausted, seamlessly pivot to Raider.IO!
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
-      const targetMode = isManualActive ? manualJob.mode : (curPending > 0 && hasWclCreds && !wclQuotaExhausted ? 'wcl' : 'raiderio');
+      const targetMode = isManualActive ? manualJob.mode : (eligiblePending > 0 && hasWclCreds && !wclQuotaExhausted ? 'wcl' : 'raiderio');
 
       let engineState = 'dual_engine';
       let engineStateLabel = 'DUAL-ENGINE';
@@ -280,15 +303,17 @@ async function main() {
       currentEngineStateLabel = engineStateLabel;
       currentEngineStateDesc = engineStateDesc;
       currentPriorityStats = {
-        p1Total: p1Players.length,
+        p1Total: p1Eligible.length,
         p1Enriched: p1EnrichedCount,
         p1Pending: p1PendingCount,
         maintenanceQueue: maintenanceQueue,
-        p2p3Total: p2p3Players.length,
+        p2p3Total: p2p3Eligible.length,
         p2p3Enriched: p2p3EnrichedCount,
       };
 
-      if (targetMode === 'wcl' && curPending > 0 && hasWclCreds && !wclQuotaExhausted) {
+      let cycleResult = null;
+
+      if (targetMode === 'wcl' && eligiblePending > 0 && hasWclCreds && !wclQuotaExhausted) {
         console.log(`[Cycle ${cycle + 1}/${TOTAL_CYCLES}] [${cyclePhaseTitle}] Enriching batch of ${CYCLE_BATCH_SIZE} players with WCL (${isPlatinum ? 'Turbo' : 'Safe 10/min'})...`);
         logs.push(makeLog('info', `[WCL Enricher] Cycle ${cycle + 1}/${TOTAL_CYCLES} [${cyclePhase}]: Enriching ${CYCLE_BATCH_SIZE} players...`));
 
@@ -467,8 +492,13 @@ async function main() {
         }
       }
 
-      // Save registry to R2
-      await r2.savePlayerRegistry(region, registry);
+      // Save registry to R2 only when records were modified in this micro-cycle
+      const cycleModified = (lastTickResult.mode === 'wcl'
+        ? (accumulatedEnrichedThisTick > 0 && (lastTickResult.enrichedCount || 0) > 0)
+        : (((lastTickResult.newPlayersCount || 0) > 0) || ((lastTickResult.updatedPlayersCount || 0) > 0)));
+      if (cycleModified) {
+        await r2.savePlayerRegistry(region, registry);
+      }
 
       // Upload status.json so dashboard immediately sees the updated counts (+10)
       const currentEnrichedTotal = Object.values(registry.players).filter(p => p.enriched).length;
@@ -528,6 +558,11 @@ async function main() {
           await new Promise(r => setTimeout(r, 1500));
         }
       }
+    }
+
+    // Ensure modified registry is persisted before generating pages
+    if (accumulatedEnrichedThisTick > 0 || accumulatedNewThisTick > 0) {
+      await r2.savePlayerRegistry(region, registry);
     }
 
     // 5. Regenerate static API pages for top 20 pages
