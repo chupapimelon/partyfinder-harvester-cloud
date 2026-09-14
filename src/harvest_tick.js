@@ -241,6 +241,8 @@ async function main() {
       } catch (e) {}
 
       const allRegPlayers = Object.values(registry.players || {});
+      const curTotal = allRegPlayers.length;
+      const curEnriched = allRegPlayers.filter(p => p.enriched).length;
       const eligiblePlayers = allRegPlayers.filter(p => (p.rioScore || 0) >= MIN_ENRICH_SCORE);
       const eligibleEnriched = eligiblePlayers.filter(p => p.enriched).length;
       const eligiblePending = Math.max(0, eligiblePlayers.length - eligibleEnriched);
