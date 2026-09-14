@@ -440,6 +440,25 @@ async function main() {
           lastScannedPage: result.lastScannedPage,
           nextPage: result.nextPage,
         };
+
+        // Automatic Round-Robin Region Rotation
+        if (result.wrapped) {
+          const NEXT_REGION = { us: 'eu', eu: 'kr', kr: 'tw', tw: 'us' };
+          const nextReg = NEXT_REGION[region] || 'us';
+          console.log(`[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${region.toUpperCase()}]. Rotating active region to [${nextReg.toUpperCase()}]!`);
+          logs.push(makeLog('success', `[Auto-Switch] 🏁 Completed ${region.toUpperCase()} 3,000+ competitive pool! Auto-switching region to [${nextReg.toUpperCase()}].`));
+          try {
+            config.primaryRegion = nextReg;
+            await sb.setState('config', config);
+            if (manualJob && manualJob.running) {
+              manualJob.region = nextReg;
+              manualJob.page = 0;
+            }
+          } catch (err) {
+            console.warn('[Auto-Switch] Failed to update config in Supabase:', err.message);
+          }
+          break;
+        }
       }
 
       // Save registry to R2

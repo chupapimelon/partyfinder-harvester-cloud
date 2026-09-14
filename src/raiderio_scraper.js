@@ -92,6 +92,7 @@ async function scanRaiderIoPages(registry, options = {}) {
   let skippedNoScoreCount = 0;
   let lastScannedPage = pageStart;
   let fetchError = null;
+  let hasWrappedAround = false;
   const discoveredList = [];
   const CHUNK_SIZE = 5;
 
@@ -124,6 +125,7 @@ async function scanRaiderIoPages(registry, options = {}) {
         console.log(`[RaiderIO] No more characters on page ${res.page}. End of leaderboard reached. Wrapping back to Rank #1 (Page 0)...`);
         registry.lastScannedPage = 0;
         breakAll = true;
+        hasWrappedAround = true;
         break;
       }
 
@@ -133,6 +135,7 @@ async function scanRaiderIoPages(registry, options = {}) {
         console.log(`[RaiderIO] Page ${res.page} begins with score < ${minScore} (${rankedList[0]?.score || 0}). End of competitive bracket reached. Wrapping back to Rank #1 (Page 0)...`);
         registry.lastScannedPage = 0;
         breakAll = true;
+        hasWrappedAround = true;
         break;
       }
 
@@ -253,6 +256,7 @@ async function scanRaiderIoPages(registry, options = {}) {
     charactersProcessed: runsProcessed,
     discovered: discoveredList,
     error: fetchError,
+    wrapped: hasWrappedAround,
   };
 }
 
