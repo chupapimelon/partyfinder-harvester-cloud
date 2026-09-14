@@ -81,6 +81,8 @@ async function enrichBatch(registry, options = {}) {
   const zoneId = options.zoneId || 55;
 
   const targetPriority = options.targetPriority || 1; // 1 = P1 Mega, 'maintenance' = changed pushers, 'p2_p3' = Mid/Low, 'all' = any
+  const MIN_ENRICH_SCORE = parseInt(process.env.MIN_ENRICH_SCORE || '3000', 10);
+  const minScore = options.minScore !== undefined ? options.minScore : MIN_ENRICH_SCORE;
 
   let candidatePlayers = [];
   if (targetPriority === 'maintenance') {
@@ -99,6 +101,9 @@ async function enrichBatch(registry, options = {}) {
   } else {
     candidatePlayers = Object.values(registry.players).filter(p => !p.enriched);
   }
+
+  // Filter candidates to active competitive pushers (>= minScore)
+  candidatePlayers = candidatePlayers.filter(p => (p.rioScore || 0) >= minScore);
 
   const unEnriched = candidatePlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
 

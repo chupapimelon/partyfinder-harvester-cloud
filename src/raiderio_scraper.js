@@ -13,6 +13,8 @@ const {
 } = require('./season_detector');
 const { getRealmPriority, isMegaRealm, cleanRealmSlug } = require('./realm_indexer');
 
+const MIN_RIO_SCORE = parseInt(process.env.MIN_RIO_SCORE || '3000', 10);
+
 /**
  * Scan Raider.IO M+ leaderboards and add new players to the registry
  * @param {object} registry — Player registry object (from R2)
@@ -75,6 +77,7 @@ async function scanRaiderIoPages(registry, options = {}) {
   await detectCurrentSeason().catch(() => {});
   const season = options.season || getCurrentSeason();
   const levelCap = options.levelCap || getCurrentLevelCap();
+  const minScore = options.minScore !== undefined ? options.minScore : MIN_RIO_SCORE;
   const region = (options.region || 'us').toLowerCase();
   const pageCount = Math.min(parseInt(options.pageCount, 10) || 25, 50);
 
@@ -124,9 +127,10 @@ async function scanRaiderIoPages(registry, options = {}) {
         break;
       }
 
-      // Early Wrap-Around: If the highest ranked player on this page has 0 score, all subsequent players and pages have 0 score.
-      if ((rankedList[0]?.score || 0) <= 0) {
-        console.log(`[RaiderIO] Page ${res.page} begins with 0-score players. End of active pushers reached. Wrapping back to Rank #1 (Page 0)...`);
+      // Early Wrap-Around: If the highest ranked player on this page is below minScore,
+      // all subsequent players and pages are also below minScore. End of competitive bracket reached.
+      if ((rankedList[0]?.score || 0) < minScore) {
+        console.log(`[RaiderIO] Page ${res.page} begins with score < ${minScore} (${rankedList[0]?.score || 0}). End of competitive bracket reached. Wrapping back to Rank #1 (Page 0)...`);
         registry.lastScannedPage = 0;
         breakAll = true;
         break;
@@ -148,8 +152,8 @@ async function scanRaiderIoPages(registry, options = {}) {
         const overallScore = Math.round((item.score || 0) * 10) / 10;
         const runs = item.runs || [];
 
-        // Option A Filter: Strictly require active Raider.IO score (> 0) and at least 1 recorded run
-        if (overallScore <= 0 || runs.length === 0) {
+        // Competitive Bracket Filter: Strictly require active Raider.IO score (>= minScore) and at least 1 recorded run
+        if (overallScore < minScore || runs.length === 0) {
           skippedNoScoreCount++;
           continue;
         }
