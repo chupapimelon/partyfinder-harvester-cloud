@@ -453,10 +453,16 @@ async function main() {
             if (manualJob && manualJob.running) {
               manualJob.region = nextReg;
               manualJob.page = 0;
+              await sb.getClient().from('app_secrets').upsert({
+                key: 'manual_job_state',
+                value: JSON.stringify(manualJob)
+              }, { onConflict: 'key' });
             }
           } catch (err) {
             console.warn('[Auto-Switch] Failed to update config in Supabase:', err.message);
           }
+          // Persist completed region registry to R2 before breaking
+          await r2.savePlayerRegistry(region, registry);
           break;
         }
       }

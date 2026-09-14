@@ -2849,13 +2849,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           const rioData = await fetchRaiderIoRankings(reg, page);
           if (rioData) {
             cloudCrawlerPage++;
+            const rankings = rioData.rankings?.rankedCharacters || rioData.rankings?.ranking?.records || (Array.isArray(rioData.rankings) ? rioData.rankings : []);
             const isSub3000 = rankings.length > 0 && ((rankings[0]?.score || 0) < 3000);
             if (!rankings || rankings.length === 0 || isSub3000) {
               const NEXT_REGION = { us: 'eu', eu: 'kr', kr: 'tw', tw: 'us' };
               const nextReg = NEXT_REGION[reg] || 'us';
               appendLog('success', `[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${reg.toUpperCase()}]. Auto-switching active region to [${nextReg.toUpperCase()}].`);
               currentActiveRegion = nextReg.toUpperCase();
+              updateRegionRealms(currentActiveRegion);
+              if (cfgPrimaryRegion) cfgPrimaryRegion.value = currentActiveRegion;
               cloudCrawlerPage = 0;
+              return;
             }
             let addedCount = 0;
 
