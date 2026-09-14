@@ -364,8 +364,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (statCacheSize) {
       const activeReg = (currentActiveRegion || 'US').toUpperCase();
-      const totalCensus = LIVE_RIO_CENSUS[activeReg] || 507353;
-      const pctPool = ((totalTracked / totalCensus) * 100).toFixed(2);
+      const rawCensus = LIVE_RIO_CENSUS[activeReg] || 507353;
+      const totalCensus = Math.max(rawCensus, totalTracked);
+      const pctPool = Math.min(100, (totalTracked / totalCensus) * 100).toFixed(2);
       statCacheSize.textContent = `${totalTracked.toLocaleString()} of ${totalCensus.toLocaleString()} ${activeReg} Players (${pctPool}%)`;
     }
     if (statEnrichedPlayers) {
@@ -1375,13 +1376,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function createRegionCardHtml(title, flags, code, stats) {
       const isActive = currentActiveRegion === code ? 'active-region' : '';
-      const totalCensus = LIVE_RIO_CENSUS[code] || 507353;
+      const rawCensus = LIVE_RIO_CENSUS[code] || 507353;
       const { harvested: harvestedCount, enriched: enrichedCount } = getLiveRegionHarvestStats(code);
+      const totalCensus = Math.max(rawCensus, harvestedCount);
 
-      const scrapePct = totalCensus > 0 ? ((harvestedCount / totalCensus) * 100).toFixed(2) : '0.00';
+      const scrapePct = totalCensus > 0 ? Math.min(100, (harvestedCount / totalCensus) * 100).toFixed(2) : '0.00';
       const isScraped = harvestedCount > 0;
 
-      const enrichOfPoolPct = harvestedCount > 0 ? ((enrichedCount / harvestedCount) * 100).toFixed(1) : '0.0';
+      const enrichOfPoolPct = harvestedCount > 0 ? Math.min(100, (enrichedCount / harvestedCount) * 100).toFixed(1) : '0.0';
       const isEnriched = enrichedCount > 0;
 
       return `
@@ -1404,7 +1406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               </span>
             </div>
             <div class="reg-progress-track" style="background: rgba(255, 255, 255, 0.06); height: 6px; border-radius: 3px; overflow: hidden;" title="Raider.IO Scraped: ${harvestedCount.toLocaleString()} / ${totalCensus.toLocaleString()} (${scrapePct}%)">
-              <div style="width: ${Math.max(isScraped ? 0.8 : 0, parseFloat(scrapePct))}%; height: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); transition: width 0.3s ease;"></div>
+              <div style="width: ${Math.min(100, Math.max(isScraped ? 0.8 : 0, parseFloat(scrapePct)))}%; height: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); transition: width 0.3s ease;"></div>
             </div>
           </div>
 
@@ -1480,8 +1482,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let rowsHtml = '';
     regionsInfo.forEach(r => {
-      const census = LIVE_RIO_CENSUS[r.code] || 507353;
       const { harvested, enriched } = getLiveRegionHarvestStats(r.code);
+      const rawCensus = LIVE_RIO_CENSUS[r.code] || 507353;
+      const census = Math.max(rawCensus, harvested);
 
       totalRealmsGlobal += r.stats.totalRealms;
       totalP1Global += r.stats.p1Count;
@@ -1491,8 +1494,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       totalHarvestedGlobal += harvested;
       totalEnrichedGlobal += enriched;
 
-      const scrapePct = census > 0 ? ((harvested / census) * 100).toFixed(2) : '0.00';
-      const enrichPct = harvested > 0 ? ((enriched / harvested) * 100).toFixed(1) : '0.0';
+      const scrapePct = census > 0 ? Math.min(100, (harvested / census) * 100).toFixed(2) : '0.00';
+      const enrichPct = harvested > 0 ? Math.min(100, (enriched / harvested) * 100).toFixed(1) : '0.0';
       const isTarget = currentActiveRegion === r.code;
 
       let statusBadge = `<span class="badge badge-soft-info">⏳ Standby</span>`;
@@ -1566,8 +1569,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     analyticsMatrixBody.innerHTML = rowsHtml;
 
     if (analyticsMatrixFoot) {
-      const globalScrapePct = ((totalHarvestedGlobal / totalCensusGlobal) * 100).toFixed(2);
-      const globalEnrichPct = totalHarvestedGlobal > 0 ? ((totalEnrichedGlobal / totalHarvestedGlobal) * 100).toFixed(1) : '0.0';
+      const globalScrapePct = totalCensusGlobal > 0 ? Math.min(100, (totalHarvestedGlobal / totalCensusGlobal) * 100).toFixed(2) : '0.00';
+      const globalEnrichPct = totalHarvestedGlobal > 0 ? Math.min(100, (totalEnrichedGlobal / totalHarvestedGlobal) * 100).toFixed(1) : '0.0';
       analyticsMatrixFoot.innerHTML = `
         <tr>
           <td>

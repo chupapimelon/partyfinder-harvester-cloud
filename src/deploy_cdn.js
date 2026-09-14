@@ -99,6 +99,7 @@ function buildLuaDataset(playersMap, regionLabel = 'GLOBAL') {
     `    Region = "${regionLabel}",`,
     `    Generated = ${timestamp},`,
     `    TotalPlayers = ${totalUnique},`,
+    `    TotalEntries = ${playerLines.length},`,
     `    EnrichedPlayers = ${enriched},`,
     `    PendingEnrichment = ${pending},`,
     '    SubRegionCounts = {'
