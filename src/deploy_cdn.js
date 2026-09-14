@@ -1,14 +1,16 @@
 /**
- * deploy_cdn.js — Compile player data to Lua and deploy to Cloudflare Pages via GitHub API
- * Replaces local git.exe workflow with pure HTTP API calls
+ * deploy_cdn.js — Compile player data to Lua and deploy to Cloudflare R2 CDN
+ * Generates both Global and Regional (US) databases, plus fast Gzip (.gz) streams.
  * 
  * Triggered hourly via GitHub Actions cron
  */
 
 const crypto = require('crypto');
+const zlib = require('zlib');
 const r2 = require('./r2_client');
 const sb = require('./supabase_client');
 const { getCurrentLevelCap } = require('./season_detector');
+const { getSubRegion } = require('./subregion_engine');
 
 const GITHUB_DEPLOY_TOKEN = process.env.GITHUB_DEPLOY_TOKEN;
 const GITHUB_REPO = 'chupapimelon/imong-mama-ui';
@@ -28,8 +30,6 @@ const SPEC_TO_INDEX = {
   265: 34, 266: 35, 267: 36,
   71: 37, 72: 38, 73: 39,
 };
-
-const { getSubRegion } = require('./subregion_engine');
 
 function packRecord(record) {
   const specIndex = SPEC_TO_INDEX[record.specId] || 0;
@@ -51,23 +51,9 @@ function packRecord(record) {
 }
 
 /**
- * Compile all regions into a single Lua data file
+ * Build a Lua database string and compressed Gzip buffer from player records
  */
-async function compileDatabase() {
-  const regions = ['us', 'eu', 'kr', 'tw'];
-  let allPlayers = {};
-
-  for (const reg of regions) {
-    try {
-      const registry = await r2.loadPlayerRegistry(reg);
-      if (registry && registry.players) {
-        Object.assign(allPlayers, registry.players);
-      }
-    } catch (e) {
-      console.warn(`[Compiler] No data for region ${reg}: ${e.message}`);
-    }
-  }
-
+function buildLuaDataset(playersMap, regionLabel = 'GLOBAL') {
   let enriched = 0, pending = 0, totalUnique = 0;
   const subRegionCounts = {};
   const regionCounts = { US: 0, EU: 0, KR: 0, TW: 0 };
@@ -75,7 +61,7 @@ async function compileDatabase() {
   const playerLines = [];
   const levelCap = getCurrentLevelCap();
 
-  for (const [key, p] of Object.entries(allPlayers)) {
+  for (const [key, p] of Object.entries(playersMap)) {
     if (!p || typeof p !== 'object') continue;
     if (p.level && p.level < levelCap) continue;
     totalUnique++;
@@ -90,8 +76,7 @@ async function compileDatabase() {
     if (!regionalBreakdown[pRegion]) regionalBreakdown[pRegion] = {};
     regionalBreakdown[pRegion][subReg] = (regionalBreakdown[pRegion][subReg] || 0) + 1;
 
-    // Keep 100% of enriched Warcraft Logs parses + active keystone pushers
-    // Ensures file stays comfortably under Cloudflare Pages 25 MiB hard asset limit
+    // Filter to enriched or active key runners
     const isEnriched = p.enriched || (p.wcl && (p.wcl.bestParse > 0 || p.wcl.medianParse > 0));
     const hasActiveDepth = (p.highestKey && p.highestKey >= 4) || (p.rioScore && p.rioScore >= 800);
     if (!isEnriched && !hasActiveDepth) continue;
@@ -105,13 +90,13 @@ async function compileDatabase() {
   const timestamp = Math.floor(now.getTime() / 1000);
 
   const lines = [
-    '-- PartyFinder Worldwide Live Fetched Warcraft Logs Database',
-    '-- Hosted by: https://imongmama.online/',
-    `-- Generated: ${now.toISOString()} (${totalUnique} players)`,
-    '-- Deployed via: PartyFinder Cloud Harvester (GitHub Actions)',
+    `-- PartyFinder ${regionLabel} Live Fetched Warcraft Logs Database`,
+    '-- Hosted by: https://r2.imongmama.online/',
+    `-- Generated: ${now.toISOString()} (${totalUnique} players, ${playerLines.length} active entries)`,
+    '-- Deployed via: PartyFinder Cloud Harvester',
     'local _, PF = ...',
     'PF.Data_Live = {',
-    '    Region = "GLOBAL",',
+    `    Region = "${regionLabel}",`,
     `    Generated = ${timestamp},`,
     `    TotalPlayers = ${totalUnique},`,
     `    EnrichedPlayers = ${enriched},`,
@@ -130,7 +115,7 @@ async function compileDatabase() {
   lines.push('local P = PF.Data_Live.Players;');
   lines.push('');
 
-  // Chunk players into batches of 4,000 to prevent Lua 5.1 constant table overflow (MAXARG_Bx limit)
+  // Chunk players into batches of 4,000 to prevent Lua 5.1 constant table overflow
   const BATCH_SIZE = 4000;
   let batchIndex = 0;
   for (let i = 0; i < playerLines.length; i += BATCH_SIZE) {
@@ -149,46 +134,115 @@ async function compileDatabase() {
   lines.push('');
 
   const luaContent = lines.join('\n');
-  const fileSizeBytes = Buffer.byteLength(luaContent, 'utf-8');
-  const sha256 = crypto.createHash('sha256').update(luaContent).digest('hex');
+  const luaBuffer = Buffer.from(luaContent, 'utf-8');
+  const fileSizeBytes = luaBuffer.length;
+  const sha256 = crypto.createHash('sha256').update(luaBuffer).digest('hex');
 
-  const metaObj = {
-    version: '4.0.0',
-    generatedAt: now.toISOString(),
-    timestamp,
-    totalPlayers: totalUnique,
-    totalEntries: playerLines.length,
-    enrichedPlayers: enriched,
-    pendingEnrichment: pending,
-    subRegionCounts,
-    regionCounts,
-    regionalBreakdown,
-    season: 'Midnight Season 2 & Liberation of Undermine (Global Worldwide)',
-    zoneId: 55,
-    downloadUrl: 'https://imongmama.online/data/PartyFinder_Data_Live.lua',
-    sha256,
-    fileSizeBytes,
-    deployedVia: 'PartyFinder Cloud Harvester',
-  };
+  // Gzip compression for high-speed streaming downloads (3-4 MB instead of 20 MB)
+  const gzBuffer = zlib.gzipSync(luaBuffer, { level: 9 });
+  const fileSizeGzBytes = gzBuffer.length;
+  const sha256Gz = crypto.createHash('sha256').update(gzBuffer).digest('hex');
 
   return {
+    region: regionLabel,
     luaContent,
-    metaContent: JSON.stringify(metaObj, null, 2),
-    stats: { totalPlayers: totalUnique, enrichedPlayers: enriched, pendingEnrichment: pending, fileSizeBytes, fileSizeMb: (fileSizeBytes / (1024 * 1024)).toFixed(2) },
+    gzBuffer,
+    fileSizeBytes,
+    fileSizeGzBytes,
+    sha256,
+    sha256Gz,
+    stats: {
+      totalPlayers: totalUnique,
+      totalEntries: playerLines.length,
+      enrichedPlayers: enriched,
+      pendingEnrichment: pending,
+      fileSizeBytes,
+      fileSizeMb: (fileSizeBytes / (1024 * 1024)).toFixed(2),
+      fileSizeGzBytes,
+      fileSizeGzMb: (fileSizeGzBytes / (1024 * 1024)).toFixed(2),
+      subRegionCounts,
+      regionCounts,
+      regionalBreakdown,
+    }
   };
 }
 
 /**
- * Push a file to GitHub via REST API (replaces git.exe)
+ * Compile both Global and Regional databases from R2
  */
-async function pushFileToGitHub(filePath, content, commitMessage) {
-  if (!GITHUB_DEPLOY_TOKEN) {
-    throw new Error('GITHUB_DEPLOY_TOKEN not set');
+async function compileDatabase() {
+  const regions = ['us', 'eu', 'kr', 'tw'];
+  let allPlayers = {};
+  let usPlayers = {};
+
+  for (const reg of regions) {
+    try {
+      const registry = await r2.loadPlayerRegistry(reg);
+      if (registry && registry.players) {
+        Object.assign(allPlayers, registry.players);
+        if (reg === 'us') {
+          Object.assign(usPlayers, registry.players);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Compiler] No data for region ${reg}: ${e.message}`);
+    }
   }
 
-  const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${filePath}`;
+  console.log('[Compiler] Building Global database...');
+  const globalDb = buildLuaDataset(allPlayers, 'GLOBAL');
 
-  // Get current file SHA (needed for update)
+  console.log('[Compiler] Building US regional database...');
+  const usDb = buildLuaDataset(usPlayers, 'US');
+
+  const now = new Date();
+  const timestamp = Math.floor(now.getTime() / 1000);
+
+  const metaObj = {
+    version: '4.1.0',
+    generatedAt: now.toISOString(),
+    timestamp,
+    totalPlayers: globalDb.stats.totalPlayers,
+    totalEntries: globalDb.stats.totalEntries,
+    enrichedPlayers: globalDb.stats.enrichedPlayers,
+    pendingEnrichment: globalDb.stats.pendingEnrichment,
+    subRegionCounts: globalDb.stats.subRegionCounts,
+    regionCounts: globalDb.stats.regionCounts,
+    regionalBreakdown: globalDb.stats.regionalBreakdown,
+    season: 'Midnight Season 2 & Liberation of Undermine (Global & Regional)',
+    zoneId: 55,
+    downloadUrl: 'https://r2.imongmama.online/data/PartyFinder_Data_Live.lua',
+    downloadUrlGz: 'https://r2.imongmama.online/data/PartyFinder_Data_Live.lua.gz',
+    downloadUrlUS: 'https://r2.imongmama.online/data/PartyFinder_Data_US.lua',
+    downloadUrlUSGz: 'https://r2.imongmama.online/data/PartyFinder_Data_US.lua.gz',
+    sha256: globalDb.sha256,
+    sha256Gz: globalDb.sha256Gz,
+    sha256US: usDb.sha256,
+    sha256USGz: usDb.sha256Gz,
+    fileSizeBytes: globalDb.fileSizeBytes,
+    fileSizeGzBytes: globalDb.fileSizeGzBytes,
+    fileSizeMb: globalDb.stats.fileSizeMb,
+    fileSizeGzMb: globalDb.stats.fileSizeGzMb,
+    fileSizeUSMb: usDb.stats.fileSizeMb,
+    fileSizeUSGzMb: usDb.stats.fileSizeGzMb,
+    deployedVia: 'PartyFinder Cloud Harvester (R2 Direct Stream)',
+  };
+
+  return {
+    globalDb,
+    usDb,
+    metaObj,
+    metaContent: JSON.stringify(metaObj, null, 2),
+  };
+}
+
+/**
+ * Push lightweight metadata to GitHub (safe: ~2 KB, no 20 MB binary bloat)
+ */
+async function pushMetaToGitHub(filePath, content, commitMessage) {
+  if (!GITHUB_DEPLOY_TOKEN) return null;
+
+  const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${filePath}`;
   let currentSha = null;
   try {
     const getRes = await fetch(apiUrl, {
@@ -199,21 +253,15 @@ async function pushFileToGitHub(filePath, content, commitMessage) {
       },
     });
     if (getRes.ok) {
-      const fileData = await getRes.json();
-      currentSha = fileData.sha;
+      const current = await getRes.json();
+      currentSha = current.sha;
     }
-  } catch (e) {
-    console.warn(`[GitHub] Could not get SHA for ${filePath}:`, e.message);
-  }
+  } catch (e) {}
 
-  // PUT file content (base64 encoded)
   const body = {
     message: commitMessage,
-    content: Buffer.from(content, 'utf-8').toString('base64'),
-    committer: {
-      name: 'PartyFinder Cloud Harvester',
-      email: 'harvester@imongmama.online',
-    },
+    content: Buffer.from(content).toString('base64'),
+    committer: { name: 'PartyFinder Cloud Bot', email: 'harvester@imongmama.online' },
   };
   if (currentSha) body.sha = currentSha;
 
@@ -228,65 +276,60 @@ async function pushFileToGitHub(filePath, content, commitMessage) {
     body: JSON.stringify(body),
   });
 
-  if (!putRes.ok) {
-    const errBody = await putRes.text();
-    throw new Error(`GitHub PUT failed (${putRes.status}): ${errBody.slice(0, 200)}`);
+  if (putRes.ok) {
+    const resData = await putRes.json();
+    return resData.commit?.sha || 'ok';
   }
-
-  const result = await putRes.json();
-  return result.commit?.sha || 'unknown';
+  return null;
 }
 
 async function main() {
-  console.log('=== PartyFinder CDN Deploy ===');
+  console.log('=== PartyFinder High-Performance CDN Deploy ===');
   console.log(`Time: ${new Date().toISOString()}`);
 
   try {
-    // 1. Compile database from R2 data
-    console.log('[Compiler] Compiling unified database...');
-    const compiled = compileDatabase ? await compileDatabase() : null;
-    if (!compiled) throw new Error('Compilation returned null');
-    console.log(`[Compiler] Done: ${compiled.stats.totalPlayers} players, ${compiled.stats.fileSizeMb} MB`);
+    // 1. Compile Global & US Regional databases
+    const compiled = await compileDatabase();
+    console.log(`[Compiler] Global DB: ${compiled.globalDb.stats.fileSizeMb} MB (Raw) | ${compiled.globalDb.stats.fileSizeGzMb} MB (Gzip)`);
+    console.log(`[Compiler] US DB:     ${compiled.usDb.stats.fileSizeMb} MB (Raw) | ${compiled.usDb.stats.fileSizeGzMb} MB (Gzip)`);
 
     // 2. Upload directly to Cloudflare R2 bucket
-    try {
-      console.log('[R2] Uploading PartyFinder_Data_Live.lua and partyfinder_meta.json directly to R2...');
-      await r2.putRaw('data/PartyFinder_Data_Live.lua', compiled.luaContent, 'text/plain; charset=utf-8');
-      await r2.putRaw('data/partyfinder_meta.json', compiled.metaContent, 'application/json; charset=utf-8');
-      console.log('[R2] ✅ Directly uploaded to R2 bucket!');
-    } catch (r2Err) {
-      console.warn(`[R2] ⚠️ Direct R2 upload failed: ${r2Err.message}`);
+    console.log('[R2] Uploading raw and Gzip-compressed databases to R2...');
+    await Promise.all([
+      r2.putRaw('data/PartyFinder_Data_Live.lua', compiled.globalDb.luaContent, 'text/plain; charset=utf-8'),
+      r2.putRaw('data/PartyFinder_Data_Live.lua.gz', compiled.globalDb.gzBuffer, 'application/gzip'),
+      r2.putRaw('data/PartyFinder_Data_US.lua', compiled.usDb.luaContent, 'text/plain; charset=utf-8'),
+      r2.putRaw('data/PartyFinder_Data_US.lua.gz', compiled.usDb.gzBuffer, 'application/gzip'),
+      r2.putRaw('data/partyfinder_meta.json', compiled.metaContent, 'application/json; charset=utf-8'),
+    ]);
+    console.log('[R2] ✅ All databases (Global, US, Raw, Gzip, Meta) deployed to R2 successfully!');
+
+    // 3. Push lightweight metadata to GitHub (safe, <2 KB, zero git repository bloat)
+    if (GITHUB_DEPLOY_TOKEN) {
+      const ts = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+      const commitMsg = `chore(meta): sync metadata [${ts}] (${compiled.globalDb.stats.totalPlayers} players)`;
+      const metaSha = await pushMetaToGitHub('public/data/partyfinder_meta.json', compiled.metaContent, commitMsg);
+      if (metaSha) {
+        console.log(`[GitHub] Meta synced to repository: ${metaSha.slice(0, 8)}`);
+      }
     }
 
-    // 3. Push Lua file to GitHub
-    const ts = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
-    const commitMsg = `chore(data): cloud auto-sync [${ts}] (${compiled.stats.totalPlayers} players, ${compiled.stats.enrichedPlayers} enriched)`;
-
-    console.log('[GitHub] Pushing PartyFinder_Data_Live.lua...');
-    const luaSha = await pushFileToGitHub('public/data/PartyFinder_Data_Live.lua', compiled.luaContent, commitMsg);
-    console.log(`[GitHub] Lua pushed: ${luaSha.slice(0, 8)}`);
-
-    console.log('[GitHub] Pushing partyfinder_meta.json...');
-    const metaSha = await pushFileToGitHub('public/data/partyfinder_meta.json', compiled.metaContent, commitMsg);
-    console.log(`[GitHub] Meta pushed: ${metaSha.slice(0, 8)}`);
-
-    console.log('[GitHub] ✅ Deploy complete! Cloudflare Pages build triggered.');
-    console.log(`[CDN] https://imongmama.online will update in ~60-90s`);
-
-    // 3. Update Supabase deploy state (non-fatal telemetry)
+    // 4. Update Supabase deploy state (non-fatal telemetry)
     try {
       console.log('[Supabase] Updating last_deploy state...');
       await sb.setState('last_deploy', {
         at: new Date().toISOString(),
-        stats: compiled.stats,
-        commitSha: luaSha.slice(0, 8),
+        stats: compiled.globalDb.stats,
+        usStats: compiled.usDb.stats,
+        sha256: compiled.globalDb.sha256,
+        sha256Gz: compiled.globalDb.sha256Gz,
       });
       await sb.appendLogs([
-        { type: 'success', message: `[CDN Deploy] ${compiled.stats.totalPlayers} players pushed to Cloudflare Pages.`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
+        { type: 'success', message: `[CDN Deploy] ${compiled.globalDb.stats.totalPlayers} players deployed to R2 (Global ${compiled.globalDb.stats.fileSizeGzMb}MB .gz, US ${compiled.usDb.stats.fileSizeGzMb}MB .gz).`, time: new Date().toTimeString().split(' ')[0], id: Date.now() },
       ]);
       console.log('[Supabase] ✅ State and logs updated.');
     } catch (sbErr) {
-      console.warn(`[Supabase] ⚠️ Telemetry update failed: ${sbErr.message || sbErr}. (CDN deployment was already completed successfully)`);
+      console.warn(`[Supabase] ⚠️ Telemetry update failed: ${sbErr.message || sbErr}`);
     }
 
   } catch (err) {
