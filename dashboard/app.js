@@ -329,46 +329,93 @@ document.addEventListener('DOMContentLoaded', async () => {
   let liveEnrichedCounter = 0;
   let savedManualJobState = null;
   let lastJobPersistTime = 0;
+  let currentHudScope = 'all'; // 'all' | 'US' | 'EU' | 'KR' | 'TW'
+
+  function initDeckScopeSelector() {
+    const scopePills = document.querySelectorAll('#deckScopePills .btn-scope-pill');
+    scopePills.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scope = btn.dataset.scope || 'all';
+        currentHudScope = scope;
+        if (scope !== 'all') {
+          currentActiveRegion = scope;
+          if (cfgPrimaryRegion) cfgPrimaryRegion.value = scope;
+          if (dbRegionFilter) dbRegionFilter.value = scope;
+          updateRegionRealms(scope);
+        }
+        updateTelemetryHUD();
+        appendLog('info', `Switched HUD telemetry scope to [${scope.toUpperCase()}].`);
+      });
+    });
+  }
 
   // Real-Time Telemetry HUD Synchronizer
   function updateTelemetryHUD(data = null) {
     const statusData = data || latestHarvestStatus;
+
+    // Compute verified data for all 4 regions from live summary or regional store
+    const regions = ['US', 'EU', 'KR', 'TW'];
+    const regionalData = {};
+    let globalHarvested = 0;
+    let globalEnriched = 0;
+    let globalCensus = 0;
+
+    regions.forEach(reg => {
+      const stats = getLiveRegionHarvestStats(reg);
+      const rawCensus = LIVE_RIO_CENSUS[reg] || stats.harvested;
+      const census = Math.max(rawCensus, stats.harvested);
+      regionalData[reg] = {
+        harvested: stats.harvested,
+        enriched: stats.enriched,
+        pending: Math.max(0, stats.harvested - stats.enriched),
+        census
+      };
+      globalHarvested += stats.harvested;
+      globalEnriched += stats.enriched;
+      globalCensus += census;
+    });
+
+    const activeScope = (currentHudScope || 'all').toUpperCase();
+    let totalTracked = 0;
+    let enrichedCount = 0;
+    let pendingCount = 0;
+    let poolCensus = 0;
+    let scopeLabel = '';
+
+    if (activeScope === 'ALL') {
+      totalTracked = globalHarvested;
+      enrichedCount = globalEnriched;
+      pendingCount = Math.max(0, globalHarvested - globalEnriched);
+      poolCensus = globalCensus;
+      scopeLabel = 'Global Competitive Pushers';
+    } else {
+      const reg = regionalData[activeScope] || regionalData.US;
+      totalTracked = reg.harvested;
+      enrichedCount = reg.enriched;
+      pendingCount = reg.pending;
+      poolCensus = reg.census;
+      scopeLabel = `${activeScope} Players`;
+    }
+
+    // In local mode if playerDatabase is loaded for this region, incorporate loaded count
     const dbTotal = Array.isArray(playerDatabase) ? playerDatabase.length : 0;
     const dbEnriched = Array.isArray(playerDatabase) ? playerDatabase.filter(p => p && p.enriched).length : 0;
+    if (activeScope !== 'ALL' && (currentActiveRegion || 'US').toUpperCase() === activeScope) {
+      if (dbTotal > totalTracked) {
+        totalTracked = dbTotal;
+        enrichedCount = Math.max(enrichedCount, dbEnriched);
+        pendingCount = Math.max(0, totalTracked - enrichedCount);
+        poolCensus = Math.max(poolCensus, totalTracked);
+      }
+    }
 
-    // Server-reported baselines (from R2 status.json / API)
-    const statusTotal = Number(statusData?.totalTrackedPlayers ?? statusData?.totalPlayers ?? statusData?.stats?.totalUniqueTracked ?? 0);
-    const statusEnriched = Number(statusData?.enrichedPlayers ?? statusData?.stats?.enrichedPlayers ?? 0);
-
-    // Active manual job progress counter
-    const activeCount = Math.max(
-      Number(liveEnrichedCounter || 0),
-      Number(savedManualJobState?.countThisRun || 0),
-      Number(statusData?.activeJob?.countThisRun || 0)
-    );
-    const currentMode = activeManualMode || savedManualJobState?.mode || statusData?.activeJob?.mode || 'raiderio';
-
-    // Total Tracked Players:
-    // Ground truth is the exact number of unique players in the database (from R2 statusTotal or loaded playerDatabase).
-    let totalTracked = Math.max(dbTotal, statusTotal);
-
-    // Combat Enriched Players:
-    let enrichedCount = Math.max(dbEnriched, statusEnriched);
-
-    // Pending Enrichment Queue:
-    // Exactly all discovered pushers not yet enriched with WCL combat parses
-    const pendingCount = Math.max(0, totalTracked - enrichedCount);
-
-    // Update DOM
+    // Update DOM Stat Cards
     if (statTotalPlayers) {
       statTotalPlayers.textContent = totalTracked.toLocaleString();
     }
     if (statCacheSize) {
-      const activeReg = (currentActiveRegion || 'US').toUpperCase();
-      const rawCensus = LIVE_RIO_CENSUS[activeReg] || 507353;
-      const totalCensus = Math.max(rawCensus, totalTracked);
-      const pctPool = Math.min(100, (totalTracked / totalCensus) * 100).toFixed(2);
-      statCacheSize.textContent = `${totalTracked.toLocaleString()} of ${totalCensus.toLocaleString()} ${activeReg} Players (${pctPool}%)`;
+      const pctPool = poolCensus > 0 ? Math.min(100, (totalTracked / poolCensus) * 100).toFixed(2) : '100.00';
+      statCacheSize.textContent = `${totalTracked.toLocaleString()} of ${poolCensus.toLocaleString()} ${scopeLabel} (${pctPool}%)`;
     }
     if (statEnrichedPlayers) {
       statEnrichedPlayers.textContent = enrichedCount.toLocaleString();
@@ -385,8 +432,46 @@ document.addEventListener('DOMContentLoaded', async () => {
       statEnrichPercent.textContent = `${pctEnriched}% ENRICHED`;
     }
 
+    // Update Scope Indicator badge
+    const deckScopeIndicator = document.getElementById('deckScopeIndicator');
+    if (deckScopeIndicator) {
+      const scopeNames = {
+        ALL: '🌍 GLOBAL (ALL 4 REGIONS)',
+        US: '🇺🇸 AMERICAS & OCEANIA (US)',
+        EU: '🇪🇺 EUROPE (EU)',
+        KR: '🇰🇷 KOREA (KR)',
+        TW: '🇹🇼 TAIWAN & GLOBAL (TW)'
+      };
+      deckScopeIndicator.textContent = scopeNames[activeScope] || activeScope;
+    }
+
+    // Update Scope Pill buttons active class
+    const scopePills = document.querySelectorAll('#deckScopePills .btn-scope-pill');
+    scopePills.forEach(btn => {
+      const s = (btn.dataset.scope || '').toUpperCase();
+      if (s === activeScope) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Update Active Engine Target Region in Banner
+    const autoPilotEngineRegionBadge = document.getElementById('autoPilotEngineRegionBadge');
+    if (autoPilotEngineRegionBadge) {
+      const isRunning = savedHarvesterStatus === 'running' || isManualSweepActive || latestHarvestStatus?.running;
+      const activeEngReg = (latestHarvestStatus?.region || latestHarvestStatus?.activeJob?.region || '').toUpperCase();
+      if (activeEngReg && isRunning) {
+        autoPilotEngineRegionBadge.style.display = 'inline-flex';
+        autoPilotEngineRegionBadge.textContent = `TARGET: ${activeEngReg}`;
+        autoPilotEngineRegionBadge.title = `Harvester engine is currently processing region: ${activeEngReg}`;
+      } else {
+        autoPilotEngineRegionBadge.style.display = 'none';
+      }
+    }
+
     if (footerMetaDate) {
-      footerMetaDate.textContent = `Database: ${totalTracked.toLocaleString()} Players Recorded`;
+      footerMetaDate.textContent = `Database: ${globalHarvested.toLocaleString()} Players Recorded (Global)`;
     }
     if (dbTotalCountBadge) {
       dbTotalCountBadge.textContent = `${totalTracked.toLocaleString()} Players Recorded`;
@@ -905,7 +990,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               pointsResetIn: 3600
             }),
             regionsSummary: (data.regionsSummary && Object.keys(data.regionsSummary).length > 0) ? data.regionsSummary : {
-              US: { harvested: totalScraped, enriched: enrichedNum },
+              US: { harvested: REGIONAL_META_STORE.US.harvested, enriched: REGIONAL_META_STORE.US.enriched },
               EU: { harvested: REGIONAL_META_STORE.EU.harvested, enriched: REGIONAL_META_STORE.EU.enriched },
               KR: { harvested: REGIONAL_META_STORE.KR.harvested, enriched: REGIONAL_META_STORE.KR.enriched },
               TW: { harvested: REGIONAL_META_STORE.TW.harvested, enriched: REGIONAL_META_STORE.TW.enriched }
@@ -1370,8 +1455,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Authentic Live Regional Meta Store (cached from R2 api/{region}/meta.json)
   const REGIONAL_META_STORE = {
-    US: { harvested: 538358, enriched: 139360 },
-    EU: { harvested: 135082, enriched: 9317 },
+    US: { harvested: 538358, enriched: 140083 },
+    EU: { harvested: 135443, enriched: 26412 },
     KR: { harvested: 5022, enriched: 5022 },
     TW: { harvested: 4426, enriched: 4425 }
   };
@@ -1447,27 +1532,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     let harvested = (Number(regSummary.harvested) > 0 ? Number(regSummary.harvested) : 0) || Number(metaFallback.harvested || 0);
     let enriched = (Number(regSummary.enriched) > 0 ? Number(regSummary.enriched) : 0) || Number(metaFallback.enriched || 0);
 
-    // Only if the server-side harvester engine is actively running on THIS specific region, incorporate live run increments
-    const serverRegion = (latestHarvestStatus?.primaryRegion || latestHarvestStatus?.activeJob?.region || 'US').toUpperCase();
-    if (targetRegion === serverRegion && (latestHarvestStatus?.activeJob?.running || isManualSweepActive)) {
-      const liveRunCount = Math.max(
-        Number(liveEnrichedCounter || 0),
-        Number(savedManualJobState?.countThisRun || 0),
-        Number(latestHarvestStatus?.activeJob?.countThisRun || 0)
-      );
-      if (latestHarvestStatus?.activeJob?.mode === 'raiderio') {
-        harvested = Math.max(harvested, liveRunCount);
-      } else if (latestHarvestStatus?.activeJob?.mode === 'wcl') {
-        enriched = Math.max(enriched, liveRunCount);
-      }
-    }
-
     // Fallback for US only if server summary was empty
     if (targetRegion === 'US' && harvested === 0) {
       const serverTotal = Number(latestHarvestStatus?.totalTrackedPlayers ?? latestHarvestStatus?.totalPlayers ?? 0);
       const serverEnriched = Number(latestHarvestStatus?.enrichedPlayers ?? 0);
       harvested = Math.max(harvested, serverTotal);
       enriched = Math.max(enriched, serverEnriched);
+    }
+
+    // Ensure enriched never exceeds harvested
+    if (harvested > 0) {
+      enriched = Math.min(harvested, enriched);
     }
 
     return { harvested, enriched };
@@ -1591,6 +1666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const targetRegion = card.getAttribute('data-region-card');
         if (!targetRegion) return;
         currentActiveRegion = targetRegion;
+        currentHudScope = targetRegion;
         if (dbRegionFilter) dbRegionFilter.value = targetRegion;
         if (cfgPrimaryRegion) cfgPrimaryRegion.value = targetRegion;
         updateRegionRealms(targetRegion);
@@ -1600,6 +1676,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         playerDatabase = [];
         loadHarvestPlayers(true).catch(() => {});
         renderAnalyticsGrid(rawRealmsData);
+        updateTelemetryHUD();
         appendLog('info', `Switched active region to [${targetRegion}] via regional telemetry card.`);
       });
     });
@@ -2104,15 +2181,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (selected === 'all') {
         currentActiveRegion = 'all';
+        currentHudScope = 'all';
         updateRegionRealms('all');
         pageMapCache.clear();
         loadedPagesSet.clear();
         searchIndexCache.clear();
         playerDatabase = [];
         appendLog('info', `Filtering Player Database by [All Regions (Global)].`);
+        updateTelemetryHUD();
         await loadHarvestPlayers(true);
       } else {
         currentActiveRegion = selected;
+        currentHudScope = selected;
         if (cfgPrimaryRegion) cfgPrimaryRegion.value = selected;
         updateRegionRealms(selected);
         pageMapCache.clear();
@@ -2120,6 +2200,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         searchIndexCache.clear();
         playerDatabase = [];
         appendLog('info', `Switched Player Database filter to region: [${selected}].`);
+        updateTelemetryHUD();
         await loadHarvestPlayers(true);
       }
     });
@@ -4413,6 +4494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Initial Boot
+  initDeckScopeSelector();
   await detectSeasonAndLevelCap().catch(() => {});
   await loadRealms();
   refreshLiveRioCensus().catch(() => {});

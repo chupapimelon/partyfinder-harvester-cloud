@@ -88,6 +88,7 @@
             <div class="autopilot-status-badge" id="autoPilotBadge">
               <span class="pulse-dot" style="background: #94a3b8; box-shadow: none;"></span>
               <span id="autoPilotBadgeText">HARVESTER: STANDBY (PAUSED)</span>
+              <span class="badge badge-soft-warning" id="autoPilotEngineRegionBadge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; font-weight: 700; display: none;">TARGET: ALL</span>
             </div>
             <div class="autopilot-phase-info">
               <div class="phase-title" id="autoPilotPhaseTitle">HYBRID ENGINE: RAIDER.IO DISCOVERY &amp; WCL COMBAT ENRICHMENT</div>
@@ -119,6 +120,22 @@
             <button class="btn btn-autopilot-stop" id="btnStopAutoPilot" style="display: none;">
               <span>■ STOP</span>
             </button>
+          </div>
+        </div>
+
+        <!-- Control Deck Regional Telemetry Scope Selector -->
+        <div class="deck-scope-bar">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <i class="bx bx-globe" style="color: #38bdf8; font-size: 16px;"></i>
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.8px; color: #94a3b8; text-transform: uppercase;">Telemetry Scope:</span>
+            <span id="deckScopeIndicator" class="badge badge-soft-info" style="font-size: 11px; padding: 2px 8px; font-weight: 700;">🌍 GLOBAL (ALL 4 REGIONS)</span>
+          </div>
+          <div class="deck-scope-pills" id="deckScopePills">
+            <button type="button" class="btn-scope-pill active" data-scope="all" title="View aggregated telemetry across all 4 regions">🌍 Global</button>
+            <button type="button" class="btn-scope-pill" data-scope="US" title="Filter HUD to Americas &amp; Oceania">🇺🇸 US</button>
+            <button type="button" class="btn-scope-pill" data-scope="EU" title="Filter HUD to Europe">🇪🇺 EU</button>
+            <button type="button" class="btn-scope-pill" data-scope="KR" title="Filter HUD to Korea">🇰🇷 KR</button>
+            <button type="button" class="btn-scope-pill" data-scope="TW" title="Filter HUD to Taiwan &amp; Global">🇹🇼 TW</button>
           </div>
         </div>
 
