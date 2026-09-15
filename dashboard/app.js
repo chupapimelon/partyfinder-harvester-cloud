@@ -1102,8 +1102,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           const currentTotalTracked = Number(data.totalTrackedPlayers || data.totalPlayers || 0);
           if (currentTotalTracked > 0 && currentTotalTracked !== lastLoadedPlayersTotal) {
             lastLoadedPlayersTotal = currentTotalTracked;
-            metaTotalPlayers = Math.max(metaTotalPlayers, currentTotalTracked);
-            if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${currentTotalTracked.toLocaleString()} Players Recorded`;
+            if ((currentActiveRegion || 'US').toUpperCase() === 'US') {
+              metaTotalPlayers = Math.max(metaTotalPlayers, currentTotalTracked);
+              if (dbTotalCountBadge) dbTotalCountBadge.textContent = `${currentTotalTracked.toLocaleString()} Players Recorded`;
+            }
           }
         }
       }
@@ -1439,44 +1441,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Dynamically computes authentic scraped and enriched counts for each region
   function getLiveRegionHarvestStats(code) {
     const targetRegion = (code || 'US').toUpperCase();
-    const currentActive = (currentActiveRegion || 'US').toUpperCase();
+    const metaFallback = REGIONAL_META_STORE[targetRegion] || {};
+    const regSummary = latestHarvestStatus?.regionsSummary?.[targetRegion] || {};
 
-    // 1. In-memory playerDatabase counts for this region
-    const dbPlayers = Array.isArray(playerDatabase) ? playerDatabase : [];
-    const regionPlayers = dbPlayers.filter(p => {
-      const reg = (p?.region || 'US').toUpperCase();
-      return reg === targetRegion;
-    });
+    let harvested = (Number(regSummary.harvested) > 0 ? Number(regSummary.harvested) : 0) || Number(metaFallback.harvested || 0);
+    let enriched = (Number(regSummary.enriched) > 0 ? Number(regSummary.enriched) : 0) || Number(metaFallback.enriched || 0);
 
-    let harvested = regionPlayers.length;
-    let enriched = regionPlayers.filter(p => p?.enriched).length;
-
-    // 2. Reconcile with live telemetry HUD / active sweep runner for the active region
-    if (targetRegion === currentActive) {
+    // Only if the server-side harvester engine is actively running on THIS specific region, incorporate live run increments
+    const serverRegion = (latestHarvestStatus?.primaryRegion || latestHarvestStatus?.activeJob?.region || 'US').toUpperCase();
+    if (targetRegion === serverRegion && (latestHarvestStatus?.activeJob?.running || isManualSweepActive)) {
       const liveRunCount = Math.max(
         Number(liveEnrichedCounter || 0),
         Number(savedManualJobState?.countThisRun || 0),
         Number(latestHarvestStatus?.activeJob?.countThisRun || 0)
       );
-      const serverTotal = Number(
-        latestHarvestStatus?.totalTrackedPlayers ??
-        latestHarvestStatus?.totalPlayers ??
-        latestHarvestStatus?.stats?.totalUniqueTracked ?? 0
-      );
-      const serverEnriched = Number(
-        latestHarvestStatus?.enrichedPlayers ??
-        latestHarvestStatus?.stats?.enrichedPlayers ?? 0
-      );
+      if (latestHarvestStatus?.activeJob?.mode === 'raiderio') {
+        harvested = Math.max(harvested, liveRunCount);
+      } else if (latestHarvestStatus?.activeJob?.mode === 'wcl') {
+        enriched = Math.max(enriched, liveRunCount);
+      }
+    }
 
-      harvested = Math.max(harvested, serverTotal, liveRunCount, dbPlayers.length);
+    // Fallback for US only if server summary was empty
+    if (targetRegion === 'US' && harvested === 0) {
+      const serverTotal = Number(latestHarvestStatus?.totalTrackedPlayers ?? latestHarvestStatus?.totalPlayers ?? 0);
+      const serverEnriched = Number(latestHarvestStatus?.enrichedPlayers ?? 0);
+      harvested = Math.max(harvested, serverTotal);
       enriched = Math.max(enriched, serverEnriched);
-    } else {
-      const regSummary = latestHarvestStatus?.regionsSummary?.[targetRegion];
-      const metaFallback = REGIONAL_META_STORE[targetRegion] || {};
-      const hCount = (Number(regSummary?.harvested) > 0 ? Number(regSummary.harvested) : 0) || Number(metaFallback.harvested || 0);
-      const eCount = (Number(regSummary?.enriched) > 0 ? Number(regSummary.enriched) : 0) || Number(metaFallback.enriched || 0);
-      harvested = Math.max(harvested, hCount);
-      enriched = Math.max(enriched, eCount);
     }
 
     return { harvested, enriched };
