@@ -265,6 +265,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const vcardWclLink = document.getElementById('vcardWclLink');
 
   // Database Tab Elements
+  const dbRegionFilter = document.getElementById('dbRegionFilter');
   const dbSearchInput = document.getElementById('dbSearchInput');
   const dbRealmFilter = document.getElementById('dbRealmFilter');
   const dbTierFilter = document.getElementById('dbTierFilter');
@@ -601,10 +602,61 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Show immediate responsive loading indicator if table is currently empty
       if (dbTableBody && playerDatabase.length === 0) {
-        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database from CDN...</td></tr>`;
+        const displayReg = (currentActiveRegion || 'US').toUpperCase();
+        dbTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 36px;"><span class="pulse-dot" style="display:inline-block; margin-right:8px;"></span> Loading Player Database [${displayReg}] from CDN...</td></tr>`;
       }
 
       if (IS_CLOUD) {
+        if (reg === 'all') {
+          // Global Multi-Region Mode: fetch page 1 from all 4 regions in parallel
+          let totalAll = 0;
+          let combinedPlayers = [];
+          const allRegions = ['us', 'eu', 'kr', 'tw'];
+
+          await Promise.all(allRegions.map(async (rCode) => {
+            try {
+              let mRes = await fetch(`/api/${rCode}/meta.json`).catch(() => null);
+              if (!mRes || !mRes.ok) mRes = await fetch(`${R2_BASE}/api/${rCode}/meta.json`).catch(() => null);
+              if (mRes && mRes.ok) {
+                const m = await mRes.json();
+                totalAll += Number(m.totalPlayers) || 0;
+              }
+            } catch (e) {}
+
+            try {
+              let pRes = await fetch(`/api/${rCode}/page_0001.json`).catch(() => null);
+              if (!pRes || !pRes.ok) pRes = await fetch(`${R2_BASE}/api/${rCode}/page_0001.json`).catch(() => null);
+              if (pRes && pRes.ok) {
+                const pData = await pRes.json();
+                const rawList = Array.isArray(pData.players) ? pData.players : [];
+                combinedPlayers.push(...rawList.map(p => normalizePlayerRecord(p, rCode)));
+              }
+            } catch (e) {}
+          }));
+
+          if (totalAll === 0) {
+            totalAll = (REGIONAL_META_STORE.US.harvested || 538358) + 
+                       (REGIONAL_META_STORE.EU.harvested || 135082) + 
+                       (REGIONAL_META_STORE.KR.harvested || 5022) + 
+                       (REGIONAL_META_STORE.TW.harvested || 4426);
+          }
+
+          metaTotalPlayers = totalAll;
+          metaTotalPages = Math.ceil(totalAll / itemsPerPage);
+          metaCachedPages = 200;
+          if (dbTotalCountBadge) {
+            dbTotalCountBadge.textContent = `${metaTotalPlayers.toLocaleString()} Players Recorded`;
+          }
+
+          combinedPlayers.sort((a, b) => (b.rioScore || 0) - (a.rioScore || 0));
+          playerDatabase = combinedPlayers;
+          pageMapCache.set(1, combinedPlayers.slice(0, itemsPerPage));
+          loadedPagesSet.add(1);
+          renderDatabaseTable();
+          updateTelemetryHUD();
+          return;
+        }
+
         // 1. Fetch lightweight meta.json (< 1 KB, ~20ms)
         try {
           let metaRes = await fetch(`/api/${reg}/meta.json`).catch(() => null);
@@ -623,6 +675,13 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (dbTotalCountBadge) {
                 dbTotalCountBadge.textContent = `${metaTotalPlayers.toLocaleString()} Players Recorded`;
               }
+            }
+          } else if (REGIONAL_META_STORE[reg.toUpperCase()]) {
+            const meta = REGIONAL_META_STORE[reg.toUpperCase()];
+            metaTotalPlayers = meta.harvested;
+            metaTotalPages = Math.ceil(metaTotalPlayers / itemsPerPage);
+            if (dbTotalCountBadge) {
+              dbTotalCountBadge.textContent = `${metaTotalPlayers.toLocaleString()} Players Recorded`;
             }
           }
         } catch (e) {}
@@ -1124,9 +1183,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (cfgPrimaryRegion) {
         currentActiveRegion = cfgPrimaryRegion.value || 'US';
+        if (dbRegionFilter) dbRegionFilter.value = currentActiveRegion;
         cfgPrimaryRegion.addEventListener('change', () => {
           currentActiveRegion = cfgPrimaryRegion.value;
+          if (dbRegionFilter) dbRegionFilter.value = currentActiveRegion;
           updateRegionRealms(currentActiveRegion);
+          pageMapCache.clear();
+          loadedPagesSet.clear();
+          searchIndexCache.clear();
+          playerDatabase = [];
+          loadHarvestPlayers(true).catch(() => {});
           renderAnalyticsGrid(rawRealmsData);
           appendLog('info', `Switched Primary Region to [${currentActiveRegion}]. Loaded prioritized realms.`);
         });
@@ -1202,12 +1268,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function updateRegionRealms(regionCode) {
-    if (!rawRealmsData || !rawRealmsData[regionCode]) return;
-    const realms = rawRealmsData[regionCode];
+    if (!rawRealmsData) return;
 
     // Reset dropdowns
-    quickRealmSelect.innerHTML = '<option value="">All Realms (Auto-Detect)</option>';
-    dbRealmFilter.innerHTML = '<option value="all">All Realms</option>';
+    if (quickRealmSelect) quickRealmSelect.innerHTML = '<option value="">All Realms (Auto-Detect)</option>';
+    if (dbRealmFilter) dbRealmFilter.innerHTML = '<option value="all">All Realms</option>';
+
+    if (regionCode === 'all') {
+      const allRegions = ['US', 'EU', 'KR', 'TW'];
+      allRegions.forEach(reg => {
+        const realms = rawRealmsData[reg] || [];
+        realms.forEach(r => {
+          let icon = r.priority === 1 ? '👑' : (r.priority === 2 ? '🔷' : '◽');
+          let tierLabel = r.priority === 1 ? 'Mega' : (r.priority === 2 ? 'Mid' : 'Low');
+          const popText = r.mplusPop ? ` (${r.mplusPop.toLocaleString()} M+)` : '';
+          const nameDiff = (r.slug && r.name && r.slug.toLowerCase() !== r.name.toLowerCase()) ? ` / ${r.slug}` : '';
+          const label = `[${reg}] ${icon} [${tierLabel}] ${r.name}${nameDiff}${popText}`;
+
+          const opt = document.createElement('option');
+          opt.value = r.name;
+          opt.textContent = label;
+          if (dbRealmFilter) dbRealmFilter.appendChild(opt);
+        });
+      });
+      return;
+    }
+
+    if (!rawRealmsData[regionCode]) return;
+    const realms = rawRealmsData[regionCode];
 
     const p1Count = realms.filter(r => r.priority === 1).length;
     const p2Count = realms.filter(r => r.priority === 2).length;
@@ -1251,17 +1339,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       const popText = r.mplusPop ? ` (${r.mplusPop.toLocaleString()} M+)` : '';
-      const label = `${icon} [${tierLabel} #${r.populationRank}] ${r.name}${popText}`;
+      const nameDiff = (r.slug && r.name && r.slug.toLowerCase() !== r.name.toLowerCase()) ? ` (${r.slug})` : '';
+      const label = `${icon} [${tierLabel} #${r.populationRank}] ${r.name}${nameDiff}${popText}`;
 
-      const opt1 = document.createElement('option');
-      opt1.value = r.name;
-      opt1.textContent = label;
-      quickRealmSelect.appendChild(opt1);
+      if (quickRealmSelect) {
+        const opt1 = document.createElement('option');
+        opt1.value = r.name;
+        opt1.textContent = label;
+        quickRealmSelect.appendChild(opt1);
+      }
 
-      const opt2 = document.createElement('option');
-      opt2.value = r.name;
-      opt2.textContent = label;
-      dbRealmFilter.appendChild(opt2);
+      if (dbRealmFilter) {
+        const opt2 = document.createElement('option');
+        opt2.value = r.name;
+        opt2.textContent = label;
+        dbRealmFilter.appendChild(opt2);
+      }
     });
   }
 
@@ -1434,7 +1527,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isEnriched = enrichedCount > 0;
 
       return `
-      <div class="region-card ${isActive}">
+      <div class="region-card ${isActive}" data-region-card="${code}" style="cursor: pointer;" title="Click to view &amp; filter ${title} in Player Database">
         <div class="reg-title">${title} <span>${flags}</span></div>
         <div class="reg-count">${stats.totalRealms} Realms • <span style="color: #38bdf8; font-weight: 700;">${totalCensus.toLocaleString()} Competitive Pushers (3,000+ RIO)</span></div>
         
@@ -1499,6 +1592,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       ${createRegionCardHtml('Korea', '<span class="reg-card-jur">KR</span>', 'KR', krStats)}
       ${createRegionCardHtml('Taiwan &amp; Global', '<span class="reg-card-jur">TW</span>', 'TW', twStats)}
     `;
+
+    // Make region cards clickable to quickly filter Player Database by that region
+    const regionCardEls = regionsGrid.querySelectorAll('[data-region-card]');
+    regionCardEls.forEach(card => {
+      card.addEventListener('click', () => {
+        const targetRegion = card.getAttribute('data-region-card');
+        if (!targetRegion) return;
+        currentActiveRegion = targetRegion;
+        if (dbRegionFilter) dbRegionFilter.value = targetRegion;
+        if (cfgPrimaryRegion) cfgPrimaryRegion.value = targetRegion;
+        updateRegionRealms(targetRegion);
+        pageMapCache.clear();
+        loadedPagesSet.clear();
+        searchIndexCache.clear();
+        playerDatabase = [];
+        loadHarvestPlayers(true).catch(() => {});
+        renderAnalyticsGrid(rawRealmsData);
+        appendLog('info', `Switched active region to [${targetRegion}] via regional telemetry card.`);
+      });
+    });
 
     renderAnalyticsTelemetry(data, usStats, euStats, krStats, twStats);
   }
@@ -1993,6 +2106,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --------------------------------------------------------------------------
   // 4. Database Tab Filtering & Table Rendering
   // --------------------------------------------------------------------------
+  if (dbRegionFilter) {
+    dbRegionFilter.addEventListener('change', async (e) => {
+      const selected = e.target.value;
+      currentPage = 1;
+
+      if (selected === 'all') {
+        currentActiveRegion = 'all';
+        updateRegionRealms('all');
+        pageMapCache.clear();
+        loadedPagesSet.clear();
+        searchIndexCache.clear();
+        playerDatabase = [];
+        appendLog('info', `Filtering Player Database by [All Regions (Global)].`);
+        await loadHarvestPlayers(true);
+      } else {
+        currentActiveRegion = selected;
+        if (cfgPrimaryRegion) cfgPrimaryRegion.value = selected;
+        updateRegionRealms(selected);
+        pageMapCache.clear();
+        loadedPagesSet.clear();
+        searchIndexCache.clear();
+        playerDatabase = [];
+        appendLog('info', `Switched Player Database filter to region: [${selected}].`);
+        await loadHarvestPlayers(true);
+      }
+    });
+  }
+
   [dbRealmFilter, dbTierFilter, dbRoleFilter, dbClassFilter, dbParseFilter, dbStatusFilter].forEach((input) => {
     if (!input) return;
     input.addEventListener('change', () => {
@@ -2084,8 +2225,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnDbNextPage.addEventListener('click', async () => {
     if (isFetchingPage) return;
 
+    const regionVal = dbRegionFilter ? dbRegionFilter.value : 'all';
     const searchVal = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
-    const hasFilter = (dbRealmFilter && dbRealmFilter.value !== 'all') ||
+    const hasFilter = (regionVal !== 'all' && currentActiveRegion === 'all') ||
+                      (dbRealmFilter && dbRealmFilter.value !== 'all') ||
                       (dbTierFilter && dbTierFilter.value !== 'all') ||
                       (dbRoleFilter && dbRoleFilter.value !== 'all') ||
                       (dbClassFilter && dbClassFilter.value !== 'all') ||
@@ -2098,8 +2241,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const targetPage = currentPage + 1;
+    const reg = (currentActiveRegion || 'US').toLowerCase();
 
-    if (IS_CLOUD && !searchVal && !hasFilter) {
+    if (IS_CLOUD && !searchVal && !hasFilter && reg !== 'all') {
       if (!pageMapCache.has(targetPage) && targetPage <= maxAllowedPage) {
         isFetchingPage = true;
         isDatabaseLoading = true;
@@ -2107,7 +2251,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         btnDbPrevPage.disabled = true;
         renderDatabaseTable();
 
-        const reg = (currentActiveRegion || 'US').toLowerCase();
         const pStr = String(targetPage).padStart(4, '0');
         let success = false;
         try {
@@ -2159,6 +2302,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   function renderDatabaseTable() {
+    const regionVal = dbRegionFilter ? dbRegionFilter.value : 'all';
     const searchVal = dbSearchInput ? dbSearchInput.value.trim().toLowerCase() : '';
     const realmVal = dbRealmFilter ? dbRealmFilter.value : 'all';
     const tierVal = dbTierFilter ? dbTierFilter.value : 'all';
@@ -2167,7 +2311,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const minParseVal = dbParseFilter ? (parseFloat(dbParseFilter.value) || 0) : 0;
     const statusVal = dbStatusFilter ? dbStatusFilter.value : 'all';
 
-    const hasFilter = searchVal || realmVal !== 'all' || tierVal !== 'all' || roleVal !== 'all' || classVal !== 'all' || minParseVal > 0 || statusVal !== 'all';
+    const hasFilter = (regionVal !== 'all' && currentActiveRegion === 'all') || searchVal || realmVal !== 'all' || tierVal !== 'all' || roleVal !== 'all' || classVal !== 'all' || minParseVal > 0 || statusVal !== 'all';
 
     let pageItems = [];
     let total = 0;
@@ -2187,8 +2331,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } else {
       const filtered = playerDatabase.filter((p) => {
+        if (regionVal !== 'all' && p.region && p.region.toUpperCase() !== regionVal.toUpperCase()) return false;
         if (searchVal && !p.name.toLowerCase().includes(searchVal)) return false;
-        if (realmVal !== 'all' && p.realm !== realmVal) return false;
+        if (realmVal !== 'all') {
+          const pRealmClean = (p.realm || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const pSlugClean = (p.realmSlug || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const targetClean = realmVal.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (p.realm !== realmVal && pRealmClean !== targetClean && pSlugClean !== targetClean) return false;
+        }
         if (tierVal !== 'all') {
           const pTier = getRealmPriority(p.realm);
           if (String(pTier) !== tierVal) return false;
@@ -2256,12 +2406,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         const rioUrl = `https://raider.io/characters/${p.region.toLowerCase()}/${realmSlug}/${encodeURIComponent(p.name)}`;
         const wclUrl = `https://www.warcraftlogs.com/character/${p.region.toLowerCase()}/${realmSlug}/${encodeURIComponent(p.name)}`;
 
+        const regCode = (p.region || currentActiveRegion || 'US').toUpperCase();
+        const regClass = regCode.toLowerCase();
+        const regBadge = `<span class="reg-pill-micro reg-pill-${regClass}">${regCode}</span>`;
+
         tr.innerHTML = `
           <td>
             <strong style="color: ${classColor};">${p.name}</strong>
           </td>
           <td>
             <div class="table-realm-cell">
+              ${regBadge}
               <span>${p.realm}</span>
               ${tierBadge}
             </div>
@@ -3594,10 +3749,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnExportDb) {
     btnExportDb.addEventListener('click', () => {
       const reg = (currentActiveRegion || 'US').toLowerCase();
-      const filename = `partyfinder_${reg}_database.json`;
+      const exportReg = (reg === 'all' || !reg) ? 'us' : reg;
+      const filename = `partyfinder_${exportReg}_database.json`;
       appendLog('info', `Exporting ${playerDatabase.length.toLocaleString()} players as ${filename}...`);
       const a = document.createElement('a');
-      a.href = IS_CLOUD ? `${R2_BASE}/data/rio_players_us.json` : `/api/harvest/export?region=${reg}`;
+      a.href = IS_CLOUD ? `${R2_BASE}/data/rio_players_${exportReg}.json` : `/api/harvest/export?region=${exportReg}`;
       a.download = filename;
       a.style.display = 'none';
       document.body.appendChild(a);
