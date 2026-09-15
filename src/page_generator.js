@@ -130,12 +130,14 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
   await r2.putJSON(`api/${reg}/realms.json`, { realms });
 
   // 5. Generate status.json (harvester telemetry)
+  const regionsSummary = statusData.regionsSummary || await buildRegionsSummary(reg, totalPlayers, enrichedCount, pendingCount);
   const status = {
     ...statusData,
     region: reg.toUpperCase(),
     totalPlayers,
     enrichedPlayers: enrichedCount,
     pendingEnrichment: pendingCount,
+    regionsSummary,
     lastScannedPage: registry.lastScannedPage || 0,
     updatedAt: Date.now(),
     updatedAtISO: new Date().toISOString(),
@@ -147,6 +149,44 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
   return { totalPages, meta };
 }
 
+/**
+ * Load or compute authentic regionsSummary across US, EU, KR, TW
+ */
+async function buildRegionsSummary(currentReg, currentTotal, currentEnriched, currentPending) {
+  const regions = ['us', 'eu', 'kr', 'tw'];
+  const summary = {};
+  const CENSUS = { US: 538358, EU: 135082, KR: 5022, TW: 4426 };
+
+  for (const r of regions) {
+    const code = r.toUpperCase();
+    if (r === (currentReg || 'us').toLowerCase()) {
+      summary[code] = {
+        harvested: currentTotal,
+        enriched: currentEnriched,
+        pending: currentPending,
+        totalCensus: Math.max(CENSUS[code] || 0, currentTotal),
+      };
+    } else {
+      try {
+        const meta = await r2.getJSON(`api/${r}/meta.json`);
+        if (meta && typeof meta.totalPlayers === 'number') {
+          summary[code] = {
+            harvested: meta.totalPlayers,
+            enriched: meta.enrichedPlayers || 0,
+            pending: meta.pendingEnrichment || 0,
+            totalCensus: Math.max(CENSUS[code] || 0, meta.totalPlayers),
+          };
+        } else {
+          summary[code] = { harvested: 0, enriched: 0, pending: 0, totalCensus: CENSUS[code] || 0 };
+        }
+      } catch (_) {
+        summary[code] = { harvested: 0, enriched: 0, pending: 0, totalCensus: CENSUS[code] || 0 };
+      }
+    }
+  }
+  return summary;
+}
+
 async function uploadStatusOnly(registry, region, statusData) {
   const reg = region.toLowerCase();
   const players = Object.values(registry.players || {});
@@ -154,12 +194,15 @@ async function uploadStatusOnly(registry, region, statusData) {
   const enrichedCount = players.filter(p => p.enriched).length;
   const pendingCount = totalPlayers - enrichedCount;
 
+  const regionsSummary = statusData.regionsSummary || await buildRegionsSummary(reg, totalPlayers, enrichedCount, pendingCount);
+
   const status = {
     ...statusData,
     region: reg.toUpperCase(),
     totalPlayers,
     enrichedPlayers: enrichedCount,
     pendingEnrichment: pendingCount,
+    regionsSummary,
     lastScannedPage: registry.lastScannedPage || 0,
     updatedAt: Date.now(),
     updatedAtISO: new Date().toISOString(),
@@ -168,4 +211,4 @@ async function uploadStatusOnly(registry, region, statusData) {
   return status;
 }
 
-module.exports = { generateAndUploadPages, uploadStatusOnly };
+module.exports = { generateAndUploadPages, uploadStatusOnly, buildRegionsSummary };

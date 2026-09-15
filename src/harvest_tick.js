@@ -618,6 +618,20 @@ async function main() {
       const isHarvesterActive = (statusEntry && statusEntry.value === 'running');
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
 
+      // Round-Robin Region Cycling:
+      // If not locked in a specific manual sweep, alternate between US and EU (the two regions with active pending enrichment pools)
+      // so both Americas and Europe pushers make continuous progress without stalling.
+      if (!isManualActive && isHarvesterActive) {
+        try {
+          const nextRegion = region === 'us' ? 'eu' : 'us';
+          config.primaryRegion = nextRegion;
+          await sb.setState('config', config);
+          console.log(`[Region Cycling] Rotated primaryRegion for next cycle: [${region.toUpperCase()}] -> [${nextRegion.toUpperCase()}]`);
+        } catch (rotErr) {
+          console.warn('[Region Cycling Notice]', rotErr.message);
+        }
+      }
+
       if ((isHarvesterActive || isManualActive) && ghEntry && ghEntry.value) {
         console.log('[Autonomous Chain] Harvester/Manual state is ACTIVE. Dispatching next 5-minute cloud cycle...');
         const ghHeaders = {
