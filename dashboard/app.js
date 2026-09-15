@@ -845,11 +845,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               pointsRemaining: 18000,
               pointsResetIn: 3600
             }),
-            regionsSummary: {
+            regionsSummary: (data.regionsSummary && Object.keys(data.regionsSummary).length > 0) ? data.regionsSummary : {
               US: { harvested: totalScraped, enriched: enrichedNum },
-              EU: { harvested: 0, enriched: 0 },
-              KR: { harvested: 0, enriched: 0 },
-              TW: { harvested: 0, enriched: 0 }
+              EU: { harvested: REGIONAL_META_STORE.EU.harvested, enriched: REGIONAL_META_STORE.EU.enriched },
+              KR: { harvested: REGIONAL_META_STORE.KR.harvested, enriched: REGIONAL_META_STORE.KR.enriched },
+              TW: { harvested: REGIONAL_META_STORE.TW.harvested, enriched: REGIONAL_META_STORE.TW.enriched }
             },
             activeJob: savedManualJobState || data.activeJob || {
               running: isManualSweepActive,
@@ -864,6 +864,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           latestHarvestStatus = data;
           updateTelemetryHUD(data);
           updateActiveEngineBadge(data.mode);
+          if (rawRealmsData) {
+            renderAnalyticsGrid(rawRealmsData);
+          }
 
           // Populate recent enriched player cards and stream into Real-Time Console
           const recents = data.recentEnriched || data.lastTickResult?.recentEnriched || [];
@@ -1375,11 +1378,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       harvested = Math.max(harvested, serverTotal, liveRunCount, dbPlayers.length);
       enriched = Math.max(enriched, serverEnriched);
     } else {
-      const regSummary = latestHarvestStatus?.regionsSummary?.[targetRegion] || REGIONAL_META_STORE[targetRegion];
-      if (regSummary) {
-        harvested = Math.max(harvested, Number(regSummary.harvested || regSummary.totalPlayers || 0));
-        enriched = Math.max(enriched, Number(regSummary.enriched || regSummary.enrichedPlayers || 0));
-      }
+      const regSummary = latestHarvestStatus?.regionsSummary?.[targetRegion];
+      const metaFallback = REGIONAL_META_STORE[targetRegion] || {};
+      const hCount = (Number(regSummary?.harvested) > 0 ? Number(regSummary.harvested) : 0) || Number(metaFallback.harvested || 0);
+      const eCount = (Number(regSummary?.enriched) > 0 ? Number(regSummary.enriched) : 0) || Number(metaFallback.enriched || 0);
+      harvested = Math.max(harvested, hCount);
+      enriched = Math.max(enriched, eCount);
     }
 
     return { harvested, enriched };
