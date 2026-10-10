@@ -3112,9 +3112,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             const rankings = rioData.rankings?.rankedCharacters || rioData.rankings?.ranking?.records || (Array.isArray(rioData.rankings) ? rioData.rankings : []);
             const isSub3000 = rankings.length > 0 && ((rankings[0]?.score || 0) < 3000);
             if (!rankings || rankings.length === 0 || isSub3000) {
-              const NEXT_REGION = { us: 'eu', eu: 'kr', kr: 'tw', tw: 'us' };
-              const nextReg = NEXT_REGION[reg] || 'us';
-              appendLog('success', `[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${reg.toUpperCase()}]. Auto-switching active region to [${nextReg.toUpperCase()}].`);
+              const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
+              let nextReg = 'us';
+              if (reg === 'us') {
+                const lastSec = localStorage.getItem('pf_last_sec_region') || 'tw';
+                const nextIdx = (SECONDARY_REGIONS.indexOf(lastSec) + 1) % SECONDARY_REGIONS.length;
+                nextReg = SECONDARY_REGIONS[nextIdx];
+                localStorage.setItem('pf_last_sec_region', nextReg);
+              } else {
+                nextReg = 'us';
+              }
+              appendLog('success', `[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${reg.toUpperCase()}]. Returning focus to [${nextReg.toUpperCase()}].`);
               currentActiveRegion = nextReg.toUpperCase();
               updateRegionRealms(currentActiveRegion);
               if (cfgPrimaryRegion) cfgPrimaryRegion.value = currentActiveRegion;

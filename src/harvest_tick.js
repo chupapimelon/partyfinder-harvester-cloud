@@ -468,10 +468,20 @@ async function main() {
           nextPage: result.nextPage,
         };
 
-        // Automatic Round-Robin Region Rotation
+        // Automatic Weighted Region Rotation
         if (result.wrapped) {
-          const NEXT_REGION = { us: 'eu', eu: 'kr', kr: 'tw', tw: 'us' };
-          const nextReg = NEXT_REGION[region] || 'us';
+          const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
+          let secIndex = Number(config.secondaryRegionIndex) || 0;
+          let nextReg = 'us';
+          if (region === 'us') {
+            nextReg = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
+            config.secondaryRegionIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
+            config.usCycleCount = 0;
+          } else {
+            // Secondary region completed its competitive crawl -> immediately return focus to US
+            nextReg = 'us';
+            config.usCycleCount = 0;
+          }
           console.log(`[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${region.toUpperCase()}]. Rotating active region to [${nextReg.toUpperCase()}]!`);
           logs.push(makeLog('success', `[Auto-Switch] 🏁 Completed ${region.toUpperCase()} 3,000+ competitive pool! Auto-switching region to [${nextReg.toUpperCase()}].`));
           try {
@@ -618,15 +628,41 @@ async function main() {
       const isHarvesterActive = (statusEntry && statusEntry.value === 'running');
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
 
-      // Round-Robin Region Cycling:
-      // If not locked in a specific manual sweep, alternate between US and EU (the two regions with active pending enrichment pools)
-      // so both Americas and Europe pushers make continuous progress without stalling.
+      // 3:1 Weighted US Priority Scheduling:
+      // Focus 75% of autonomous cycles and WCL quota on Americas (US).
+      // Executes 3 consecutive cycles on US, then 1 cycle on a rotating secondary region (EU -> KR -> TW), then returns to US.
       if (!isManualActive && isHarvesterActive) {
         try {
-          const nextRegion = region === 'us' ? 'eu' : 'us';
+          const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
+          const US_RATIO = Number(config.usPriorityRatio) || 3;
+          let usCount = Number(config.usCycleCount) || 0;
+          let secIndex = Number(config.secondaryRegionIndex) || 0;
+          let nextRegion = 'us';
+
+          if (region === 'us') {
+            usCount++;
+            if (usCount >= US_RATIO) {
+              nextRegion = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
+              secIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
+              usCount = 0;
+              console.log(`[Region Cycling] Completed ${US_RATIO} consecutive US cycles. Rotating to [${nextRegion.toUpperCase()}] for 1 cycle...`);
+            } else {
+              nextRegion = 'us';
+              console.log(`[Region Cycling] US Priority Focus: cycle ${usCount}/${US_RATIO} completed, continuing US next.`);
+            }
+          } else {
+            // Finished 1 cycle on secondary region (EU, KR, or TW) -> immediately switch back to US
+            nextRegion = 'us';
+            usCount = 0;
+            console.log(`[Region Cycling] Completed secondary cycle on [${region.toUpperCase()}]. Returning to [US] for next ${US_RATIO} cycles.`);
+          }
+
           config.primaryRegion = nextRegion;
+          config.usCycleCount = usCount;
+          config.secondaryRegionIndex = secIndex;
+          config.usPriorityRatio = US_RATIO;
           await sb.setState('config', config);
-          console.log(`[Region Cycling] Rotated primaryRegion for next cycle: [${region.toUpperCase()}] -> [${nextRegion.toUpperCase()}]`);
+          console.log(`[Region Cycling] Scheduled primaryRegion for next cycle: [${nextRegion.toUpperCase()}] (US Streak: ${usCount}/${US_RATIO})`);
         } catch (rotErr) {
           console.warn('[Region Cycling Notice]', rotErr.message);
         }
