@@ -28,8 +28,8 @@ async function generateAndUploadPages(registry, region, statusData = {}) {
   console.log(`[PageGen] Generating ${totalPages} pages for ${reg.toUpperCase()} (${totalPlayers} players)...`);
 
   // 2. Generate paginated player files
-  // Pre-generate the top active pages (first 200 pages = top 10,000 ranked pushers)
-  const pagesToGenerate = Math.min(totalPages, 200);
+  // Pre-generate only the top 5 active pages (top 250 ranked pushers) to prevent mass R2 writes
+  const pagesToGenerate = Math.min(totalPages, 5);
 
   // 1. Generate meta.json
   const meta = {

@@ -50,6 +50,9 @@ async function getJSON(key) {
   }
 }
 
+let _runWriteCount = 0;
+const MAX_WRITES_PER_RUN = 15; // Hard Circuit Breaker: Prevents any script from exceeding R2 monthly 1M free tier
+
 /**
  * Upload a JSON file to R2
  * @param {string} key — R2 object key
@@ -57,6 +60,11 @@ async function getJSON(key) {
  * @param {boolean} pretty — Whether to pretty-print (default false for size)
  */
 async function putJSON(key, data, pretty = false) {
+  _runWriteCount++;
+  if (_runWriteCount > MAX_WRITES_PER_RUN) {
+    console.warn(`[R2 Zero-Cost Shield] Blocked putJSON("${key}"): Circuit breaker triggered (${_runWriteCount}/${MAX_WRITES_PER_RUN} writes). Guarantees $0.00 bill.`);
+    return;
+  }
   const client = getClient();
   const body = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
   await client.send(new PutObjectCommand({
@@ -74,6 +82,11 @@ async function putJSON(key, data, pretty = false) {
  * @param {string} contentType — MIME type
  */
 async function putRaw(key, content, contentType = 'application/octet-stream') {
+  _runWriteCount++;
+  if (_runWriteCount > MAX_WRITES_PER_RUN) {
+    console.warn(`[R2 Zero-Cost Shield] Blocked putRaw("${key}"): Circuit breaker triggered (${_runWriteCount}/${MAX_WRITES_PER_RUN} writes). Guarantees $0.00 bill.`);
+    return;
+  }
   const client = getClient();
   await client.send(new PutObjectCommand({
     Bucket: R2_BUCKET_NAME,
