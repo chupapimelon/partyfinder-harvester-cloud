@@ -606,8 +606,8 @@ async function main() {
         page: registry.lastScannedPage || 0
       }
     };
-    await generateAndUploadPages(registry, region, finalStatus);
-    logs.push(makeLog('success', `[PageGen] Static API pages regenerated.`));
+    await uploadStatusOnly(registry, region, finalStatus);
+    logs.push(makeLog('success', `[Status] Live telemetry synchronized (R2 Zero-Cost Mode).`));
 
     // 6. Update final logs in Supabase
     try {
