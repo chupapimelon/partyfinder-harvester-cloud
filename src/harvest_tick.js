@@ -54,8 +54,17 @@ async function main() {
       }
     } catch (_) {}
 
-    const region = ((manualJob && manualJob.running && manualJob.region) || config.primaryRegion || 'us').toLowerCase();
-    logs.push(makeLog('info', `[Cloud Tick] Starting 24/7 autonomous worker for [${region.toUpperCase()}]...`));
+    // US Exclusive Focus Directive: Focus 100% on US until all eligible US pushers are completely finished.
+    let region = 'us';
+    if (config.usDone === true) {
+      region = ((manualJob && manualJob.running && manualJob.region) || config.primaryRegion || 'us').toLowerCase();
+    } else {
+      region = 'us';
+      if (manualJob && manualJob.running && manualJob.region !== 'us') {
+        manualJob.region = 'us';
+      }
+    }
+    logs.push(makeLog('info', `[Cloud Tick] Starting 24/7 autonomous worker for [${region.toUpperCase()}] (US Focus: ${config.usDone ? 'NORMAL ROUTING' : 'LOCKED TO US'})...`));
 
     // Detect active season and level cap
     const seasonInfo = await detectCurrentSeason().catch(() => ({ slug: getCurrentSeason(), levelCap: getCurrentLevelCap() }));
@@ -487,39 +496,56 @@ async function main() {
           nextPage: result.nextPage,
         };
 
-        // Automatic Weighted Region Rotation
+        // Leaderboard Wrap Handling: Only rotate if US is fully done
         if (result.wrapped) {
-          const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
-          let secIndex = Number(config.secondaryRegionIndex) || 0;
-          let nextReg = 'us';
-          if (region === 'us') {
-            nextReg = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
-            config.secondaryRegionIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
-            config.usCycleCount = 0;
-          } else {
-            // Secondary region completed its competitive crawl -> immediately return focus to US
-            nextReg = 'us';
-            config.usCycleCount = 0;
-          }
-          console.log(`[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${region.toUpperCase()}]. Rotating active region to [${nextReg.toUpperCase()}]!`);
-          logs.push(makeLog('success', `[Auto-Switch] 🏁 Completed ${region.toUpperCase()} 3,000+ competitive pool! Auto-switching region to [${nextReg.toUpperCase()}].`));
-          try {
-            config.primaryRegion = nextReg;
-            await sb.setState('config', config);
+          if (!config.usDone) {
+            console.log(`[Leaderboard Crawl] Completed top leaderboard crawl for US. US Focus remains active until all eligible pushers are enriched. Resetting to Page 0...`);
+            logs.push(makeLog('info', `[Leaderboard Crawl] Completed top leaderboard crawl for US. US Focus remains locked until all pushers are enriched.`));
+            registry.lastScannedPage = 0;
             if (manualJob && manualJob.running) {
-              manualJob.region = nextReg;
               manualJob.page = 0;
-              await sb.getClient().from('app_secrets').upsert({
-                key: 'manual_job_state',
-                value: JSON.stringify(manualJob)
-              }, { onConflict: 'key' });
+              manualJob.region = 'us';
+              try {
+                await sb.getClient().from('app_secrets').upsert({
+                  key: 'manual_job_state',
+                  value: JSON.stringify(manualJob)
+                }, { onConflict: 'key' });
+              } catch (_) {}
             }
-          } catch (err) {
-            console.warn('[Auto-Switch] Failed to update config in Supabase:', err.message);
+            await r2.savePlayerRegistry(region, registry);
+          } else {
+            // Normal multi-region routing (unlocked only after US is completely finished)
+            const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
+            let secIndex = Number(config.secondaryRegionIndex) || 0;
+            let nextReg = 'us';
+            if (region === 'us') {
+              nextReg = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
+              config.secondaryRegionIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
+              config.usCycleCount = 0;
+            } else {
+              nextReg = 'us';
+              config.usCycleCount = 0;
+            }
+            console.log(`[Auto-Switch] 🏁 Completed 3,000+ competitive pool for [${region.toUpperCase()}]. Rotating active region to [${nextReg.toUpperCase()}]!`);
+            logs.push(makeLog('success', `[Auto-Switch] 🏁 Completed ${region.toUpperCase()} 3,000+ competitive pool! Auto-switching region to [${nextReg.toUpperCase()}].`));
+            try {
+              config.primaryRegion = nextReg;
+              await sb.setState('config', config);
+              if (manualJob && manualJob.running) {
+                manualJob.region = nextReg;
+                manualJob.page = 0;
+                await sb.getClient().from('app_secrets').upsert({
+                  key: 'manual_job_state',
+                  value: JSON.stringify(manualJob)
+                }, { onConflict: 'key' });
+              }
+            } catch (err) {
+              console.warn('[Auto-Switch] Failed to update config in Supabase:', err.message);
+            }
+            // Persist completed region registry to R2 before breaking
+            await r2.savePlayerRegistry(region, registry);
+            break;
           }
-          // Persist completed region registry to R2 before breaking
-          await r2.savePlayerRegistry(region, registry);
-          break;
         }
       }
 
@@ -647,41 +673,83 @@ async function main() {
       const isHarvesterActive = (statusEntry && statusEntry.value === 'running');
       const isManualActive = (manualJob && manualJob.running && !manualJob.paused);
 
-      // 3:1 Weighted US Priority Scheduling:
-      // Focus 75% of autonomous cycles and WCL quota on Americas (US).
-      // Executes 3 consecutive cycles on US, then 1 cycle on a rotating secondary region (EU -> KR -> TW), then returns to US.
-      if (!isManualActive && isHarvesterActive) {
+      // Region Scheduling Logic:
+      // USER DIRECTIVE: Focus 100% on US! Only after US is completely finished (eligiblePending === 0),
+      // resume normal multi-region routing (EU, KR, TW).
+      if (region === 'us') {
+        const allRegPlayers = Object.values(registry.players || {});
+        const eligiblePlayers = allRegPlayers.filter(p => (p.rioScore || 0) >= MIN_ENRICH_SCORE);
+        const eligibleEnriched = eligiblePlayers.filter(p => p.enriched).length;
+        const eligiblePending = Math.max(0, eligiblePlayers.length - eligibleEnriched);
+        const p1Pending = eligiblePlayers.filter(p => (p.realmPriority === 1 || p.isMega || isMegaRealm('us', p.realmSlug || p.realm)) && !p.enriched).length;
+        const p2p3Pending = Math.max(0, eligiblePending - p1Pending);
+
+        if (eligiblePending === 0 || (p1Pending === 0 && p2p3Pending === 0)) {
+          config.usDone = true;
+          console.log(`[Region Focus] US is 100% COMPLETE! All ${eligibleEnriched.toLocaleString()} eligible pushers enriched. Unlocking normal multi-region routing.`);
+          logs.push(makeLog('success', `[Region Focus] US is 100% COMPLETE! All eligible pushers enriched. Normal multi-region routing unlocked.`));
+        } else {
+          config.usDone = false;
+          console.log(`[Region Focus] US Focus ACTIVE: ${eligiblePending.toLocaleString()} eligible pushers pending (${p1Pending.toLocaleString()} Mega P1, ${p2p3Pending.toLocaleString()} Mid/Low P2/P3).`);
+        }
+      }
+
+      if (isHarvesterActive || isManualActive) {
         try {
-          const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
-          const US_RATIO = Number(config.usPriorityRatio) || 3;
-          let usCount = Number(config.usCycleCount) || 0;
-          let secIndex = Number(config.secondaryRegionIndex) || 0;
           let nextRegion = 'us';
 
-          if (region === 'us') {
-            usCount++;
-            if (usCount >= US_RATIO) {
-              nextRegion = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
-              secIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
-              usCount = 0;
-              console.log(`[Region Cycling] Completed ${US_RATIO} consecutive US cycles. Rotating to [${nextRegion.toUpperCase()}] for 1 cycle...`);
+          if (config.usDone === true) {
+            // Normal Multi-Region Routing: 3:1 rotation across secondary regions (EU, KR, TW)
+            const SECONDARY_REGIONS = ['eu', 'kr', 'tw'];
+            const US_RATIO = Number(config.usPriorityRatio) || 3;
+            let usCount = Number(config.usCycleCount) || 0;
+            let secIndex = Number(config.secondaryRegionIndex) || 0;
+
+            if (region === 'us') {
+              usCount++;
+              if (usCount >= US_RATIO) {
+                nextRegion = SECONDARY_REGIONS[secIndex % SECONDARY_REGIONS.length];
+                secIndex = (secIndex + 1) % SECONDARY_REGIONS.length;
+                usCount = 0;
+                console.log(`[Normal Routing] Completed ${US_RATIO} consecutive US cycles. Rotating to [${nextRegion.toUpperCase()}] for 1 cycle...`);
+              } else {
+                nextRegion = 'us';
+                console.log(`[Normal Routing] US cycle ${usCount}/${US_RATIO} completed, continuing US next.`);
+              }
             } else {
+              // Finished 1 cycle on secondary region (EU, KR, or TW) -> return to US
               nextRegion = 'us';
-              console.log(`[Region Cycling] US Priority Focus: cycle ${usCount}/${US_RATIO} completed, continuing US next.`);
+              usCount = 0;
+              console.log(`[Normal Routing] Completed secondary cycle on [${region.toUpperCase()}]. Returning to [US] for next ${US_RATIO} cycles.`);
             }
+
+            config.primaryRegion = nextRegion;
+            config.usCycleCount = usCount;
+            config.secondaryRegionIndex = secIndex;
+            config.usPriorityRatio = US_RATIO;
           } else {
-            // Finished 1 cycle on secondary region (EU, KR, or TW) -> immediately switch back to US
+            // 100% EXCLUSIVE FOCUS ON US: Never switch to secondary regions while US is pending!
             nextRegion = 'us';
-            usCount = 0;
-            console.log(`[Region Cycling] Completed secondary cycle on [${region.toUpperCase()}]. Returning to [US] for next ${US_RATIO} cycles.`);
+            config.primaryRegion = 'us';
+            config.usCycleCount = 0;
+            console.log(`[Region Focus] 100% US Focus enforced: Next cycle scheduled on [US]. No secondary rotation until US is finished.`);
           }
 
-          config.primaryRegion = nextRegion;
-          config.usCycleCount = usCount;
-          config.secondaryRegionIndex = secIndex;
-          config.usPriorityRatio = US_RATIO;
           await sb.setState('config', config);
-          console.log(`[Region Cycling] Scheduled primaryRegion for next cycle: [${nextRegion.toUpperCase()}] (US Streak: ${usCount}/${US_RATIO})`);
+
+          // Synchronize manualJob state region so UI and any manual override stays in US
+          try {
+            const { data: s } = await sb.getClient().from('app_secrets').select('key,value').eq('key', 'manual_job_state').single();
+            if (s && s.value) {
+              const mVal = typeof s.value === 'string' ? JSON.parse(s.value) : s.value;
+              if (mVal.running) {
+                mVal.region = nextRegion;
+                await sb.getClient().from('app_secrets').update({ value: mVal }).eq('key', 'manual_job_state');
+              }
+            }
+          } catch (_) {}
+
+          console.log(`[Region Focus] Scheduled region for next cycle: [${nextRegion.toUpperCase()}] (US Done: ${!!config.usDone})`);
         } catch (rotErr) {
           console.warn('[Region Cycling Notice]', rotErr.message);
         }
