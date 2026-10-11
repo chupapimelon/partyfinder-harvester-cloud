@@ -208,6 +208,25 @@ async function uploadStatusOnly(registry, region, statusData) {
     updatedAtISO: new Date().toISOString(),
   };
   await r2.putJSON('api/status.json', status);
+
+  // Synchronize regional meta.json so direct /api/{region}/meta.json viewers stay identical to live telemetry
+  try {
+    const totalPages = Math.ceil(totalPlayers / PAGE_SIZE) || 1;
+    const meta = {
+      region: reg.toUpperCase(),
+      totalPlayers,
+      enrichedPlayers: enrichedCount,
+      pendingEnrichment: pendingCount,
+      totalPages,
+      pageSize: PAGE_SIZE,
+      cachedPages: 5,
+      lastScannedPage: registry.lastScannedPage || 0,
+      updatedAt: Date.now(),
+      updatedAtISO: new Date().toISOString(),
+    };
+    await r2.putJSON(`api/${reg}/meta.json`, meta);
+  } catch (_) {}
+
   return status;
 }
 

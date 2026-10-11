@@ -261,14 +261,21 @@ async function main() {
       let cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
       let targetPriority = 1;
 
-      if (maintenanceQueue > 0) {
-        cyclePhase = 'maintenance';
-        cyclePhaseTitle = 'PHASE 2: MEGA REALMS MAINTENANCE (WEEKLY REFRESH)';
-        targetPriority = 'maintenance';
-      } else if (p1PendingCount > 0) {
+      // Priority scheduling:
+      // 1. Phase 1 Mega Realms pending: Enrich fresh pushers from high-pop realms first so active roster coverage expands immediately.
+      // 2. Alternate between Phase 3 (Mid/Low realms pending) and Phase 2 (Maintenance refresh for existing pushers) so both queues progress.
+      if (p1PendingCount > 0) {
         cyclePhase = 'p1_mega';
         cyclePhaseTitle = 'PHASE 1: MEGA REALMS (P1) ENRICHMENT';
         targetPriority = 1;
+      } else if (p2p3PendingCount > 0 && (cycle % 2 === 0 || maintenanceQueue === 0)) {
+        cyclePhase = 'p2_p3';
+        cyclePhaseTitle = 'PHASE 3: MID & LOW REALMS (P2/P3) HARVESTING';
+        targetPriority = 'p2_p3';
+      } else if (maintenanceQueue > 0) {
+        cyclePhase = 'maintenance';
+        cyclePhaseTitle = 'PHASE 2: MEGA REALMS MAINTENANCE (WEEKLY REFRESH)';
+        targetPriority = 'maintenance';
       } else if (p2p3PendingCount > 0) {
         cyclePhase = 'p2_p3';
         cyclePhaseTitle = 'PHASE 3: MID & LOW REALMS (P2/P3) HARVESTING';
