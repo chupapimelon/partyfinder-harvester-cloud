@@ -33,14 +33,28 @@ async function main() {
     console.log('=== PartyFinder Cloud Harvester Tick ===');
     console.log(`Time: ${new Date().toISOString()}`);
 
-    // 1. Read config from Supabase
+    // 1. Read config and manual job state from Supabase
     const config = (await sb.getState('config')) || {
       primaryRegion: 'us',
       batchSize: 10,
       autoDeployIntervalMin: 60,
       wclZoneId: 55,
     };
-    const region = (config.primaryRegion || 'us').toLowerCase();
+
+    let manualJob = null;
+    let initialCountThisRun = 0;
+    try {
+      const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
+      const mEntry = secretRows?.find(s => s.key === 'manual_job_state');
+      if (mEntry && mEntry.value) {
+        manualJob = typeof mEntry.value === 'string' ? JSON.parse(mEntry.value) : mEntry.value;
+      }
+      if (manualJob && manualJob.running && typeof manualJob.countThisRun === 'number') {
+        initialCountThisRun = manualJob.countThisRun;
+      }
+    } catch (_) {}
+
+    const region = ((manualJob && manualJob.running && manualJob.region) || config.primaryRegion || 'us').toLowerCase();
     logs.push(makeLog('info', `[Cloud Tick] Starting 24/7 autonomous worker for [${region.toUpperCase()}]...`));
 
     // Detect active season and level cap
@@ -146,8 +160,6 @@ async function main() {
     }
 
     // Check if user set a manual override or paused harvester
-    let manualJob = null;
-    let initialCountThisRun = 0;
     try {
       const { data: secretRows } = await sb.getClient().from('app_secrets').select('key,value');
       const statusEntry = secretRows?.find(s => s.key === 'harvester_status');
